@@ -264,7 +264,7 @@
     useEffect(() => {
       if (!selSym || pubStatus !== "connected") return;
       pubWs.send({ ticks: selSym, subscribe:1 });
-      pubWs.send({ contracts_for: selSym, currency:"USD", product_type:"basic" });
+      pubWs.send({ contracts_for: selSym, underlying_symbol: selSym, currency:"USD", product_type:"basic" });
     }, [selSym, pubStatus]);
 
     function showToast(msg, ok=true) { setToast({msg,ok}); setTimeout(()=>setToast(null),4000); }
@@ -272,7 +272,7 @@
     function getQuote() {
       if (!selSym || !selCon) return;
       setPropLoading(true); setProposal(null);
-      const req = { proposal:1, amount:parseFloat(stake)||10, basis:"stake", contract_type:selCon.contract_type, currency:"USD", duration:parseInt(dur)||5, duration_unit:durUnit, symbol:selSym };
+      const req = { proposal:1, amount:parseFloat(stake)||10, basis:"stake", contract_type:selCon.contract_type, currency:"USD", duration:parseInt(dur)||5, duration_unit:durUnit, underlying_symbol:selSym };
       console.log("sending proposal request:", req);
       authWs.send(req);
       setTimeout(() => {
