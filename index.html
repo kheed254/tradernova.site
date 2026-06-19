@@ -209,7 +209,15 @@
       onMessage: (msg) => {
         if (msg.msg_type === "balance")   { console.log("balance msg:", msg); setBalance(msg.balance); }
         if (msg.msg_type === "portfolio") { console.log("portfolio msg:", msg); setPortfolio(msg.portfolio?.contracts || []); }
-        if (msg.msg_type === "proposal")  { setProposal(msg.proposal); propIdRef.current = msg.proposal?.id; setPropLoading(false); }
+        if (msg.msg_type === "proposal")  {
+          console.log("proposal msg:", msg);
+          if (msg.error) {
+            showToast("Quote failed: " + msg.error.message, false);
+            setPropLoading(false);
+          } else {
+            setProposal(msg.proposal); propIdRef.current = msg.proposal?.id; setPropLoading(false);
+          }
+        }
         if (msg.msg_type === "buy")       { setBuyResult(msg.buy); setBuyLoading(false); showToast(msg.error ? "Buy failed: "+msg.error.message : "✓ Contract #"+msg.buy?.contract_id+" purchased", !msg.error); authWs.send({balance:1,subscribe:1}); authWs.send({portfolio:1}); }
         if (msg.error && msg.msg_type !== "buy") { showToast("Error: "+msg.error.message, false); setPropLoading(false); setBuyLoading(false); }
       }
@@ -264,7 +272,15 @@
     function getQuote() {
       if (!selSym || !selCon) return;
       setPropLoading(true); setProposal(null);
-      authWs.send({ proposal:1, amount:parseFloat(stake)||10, basis:"stake", contract_type:selCon.contract_type, currency:"USD", duration:parseInt(dur)||5, duration_unit:durUnit, symbol:selSym });
+      const req = { proposal:1, amount:parseFloat(stake)||10, basis:"stake", contract_type:selCon.contract_type, currency:"USD", duration:parseInt(dur)||5, duration_unit:durUnit, symbol:selSym };
+      console.log("sending proposal request:", req);
+      authWs.send(req);
+      setTimeout(() => {
+        setPropLoading(curr => {
+          if (curr) showToast("No response from server — check console for details", false);
+          return false;
+        });
+      }, 8000);
     }
 
     function buyNow() {
