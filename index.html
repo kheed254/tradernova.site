@@ -270,7 +270,7 @@
       if (!selSym || pubStatus !== "connected") return;
       setContracts([]); setSelCon(null);
       pubWs.send({ ticks: selSym, subscribe:1 });
-      pubWs.send({ contracts_for: 1, underlying_symbol: selSym, product_type:"basic" });
+      pubWs.send({ contracts_for: selSym, product_type:"basic" });
     }, [selSym, pubStatus]);
 
     function showToast(msg, ok=true) { setToast({msg,ok}); setTimeout(()=>setToast(null),4000); }
