@@ -7,7 +7,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const { account_id, access_token } = req.body || {};
+  const { account_id, access_token, app_id } = req.body || {};
 
   if (!account_id || !access_token) {
     return res.status(400).json({ error: "Missing account_id or access_token" });
@@ -21,6 +21,7 @@ export default async function handler(req, res) {
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${access_token}`,
+          "Deriv-App-ID": app_id || "1089",
         },
       }
     );
