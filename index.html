@@ -184,7 +184,10 @@
 
     const pubWs = useWS(PUBLIC_WS_URL, {
       onOpen: () => { setPubStatus("connected"); pubWs.send({ active_symbols:"brief", product_type:"basic" }); },
-      onClose: () => setPubStatus("disconnected"),
+      onClose: () => {
+        setPubStatus("disconnected");
+        setTimeout(() => pubWs.connect(), 2000); // auto-reconnect
+      },
       onError: () => setPubStatus("error"),
       onMessage: (msg) => {
         if (msg.msg_type === "active_symbols") {
@@ -263,6 +266,7 @@
     // Subscribe to ticks + contracts when symbol changes
     useEffect(() => {
       if (!selSym || pubStatus !== "connected") return;
+      setContracts([]); setSelCon(null);
       pubWs.send({ ticks: selSym, subscribe:1 });
       pubWs.send({ contracts_for: selSym, underlying_symbol: selSym, currency:"USD", product_type:"basic" });
     }, [selSym, pubStatus]);
@@ -270,7 +274,8 @@
     function showToast(msg, ok=true) { setToast({msg,ok}); setTimeout(()=>setToast(null),4000); }
 
     function getQuote() {
-      if (!selSym || !selCon) return;
+      if (!selSym) { showToast("Please select an asset first", false); return; }
+      if (!selCon) { showToast("No contract types loaded for this asset yet — try reselecting it, or check market connection", false); return; }
       setPropLoading(true); setProposal(null);
       const req = { proposal:1, amount:parseFloat(stake)||10, basis:"stake", contract_type:selCon.contract_type, currency:"USD", duration:parseInt(dur)||5, duration_unit:durUnit, underlying_symbol:selSym };
       console.log("sending proposal request:", req);
