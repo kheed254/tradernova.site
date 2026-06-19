@@ -181,6 +181,7 @@
     const [tab, setTab]             = useState("market");
     const [toast, setToast]         = useState(null);
     const propIdRef = useRef(null);
+    const pendingBuyRef = useRef(false);
 
     const pubWs = useWS(PUBLIC_WS_URL, {
       onOpen: () => { setPubStatus("connected"); pubWs.send({ active_symbols:"brief", product_type:"basic" }); },
@@ -219,11 +220,17 @@
           if (msg.error) {
             showToast("Quote failed: " + msg.error.message, false);
             setPropLoading(false);
+            setBuyLoading(false);
+            pendingBuyRef.current = false;
           } else {
             setProposal(msg.proposal); propIdRef.current = msg.proposal?.id; setPropLoading(false);
+            if (pendingBuyRef.current) {
+              pendingBuyRef.current = false;
+              authWs.send({ buy: msg.proposal.id, price: parseFloat(msg.proposal.ask_price) });
+            }
           }
         }
-        if (msg.msg_type === "buy")       { setBuyResult(msg.buy); setBuyLoading(false); showToast(msg.error ? "Buy failed: "+msg.error.message : "✓ Contract #"+msg.buy?.contract_id+" purchased", !msg.error); authWs.send({balance:1,subscribe:1}); authWs.send({portfolio:1}); }
+        if (msg.msg_type === "buy")       { setBuyResult(msg.buy); setBuyLoading(false); showToast(msg.error ? "Buy failed: "+msg.error.message : "✓ Contract #"+msg.buy?.contract_id+" purchased", !msg.error); authWs.send({portfolio:1}); }
         if (msg.error && msg.msg_type !== "buy") { showToast("Error: "+msg.error.message, false); setPropLoading(false); setBuyLoading(false); }
       }
     });
@@ -291,9 +298,13 @@
     }
 
     function buyNow() {
-      if (!propIdRef.current) return;
+      if (!selSym || !selCon) return;
       setBuyLoading(true);
-      authWs.send({ buy: propIdRef.current, price: parseFloat(proposal?.ask_price||stake) });
+      // Re-request a fresh proposal immediately before buying — proposal IDs are short-lived
+      const req = { proposal:1, amount:parseFloat(stake)||10, basis:"stake", contract_type:selCon.contract_type, currency:"USD", duration:parseInt(dur)||5, duration_unit:durUnit, underlying_symbol:selSym };
+      console.log("refreshing proposal before buy:", req);
+      pendingBuyRef.current = true;
+      authWs.send(req);
     }
 
     const symTicks   = selSym ? (ticks[selSym]||[]) : [];
