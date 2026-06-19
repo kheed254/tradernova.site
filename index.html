@@ -88,22 +88,36 @@
   }
 
   async function getAccountId(accessToken) {
-    const res = await fetch("https://api.derivws.com/trading/v1/options/accounts", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${accessToken}`,
-        "Deriv-App-ID": APP_ID,
-      },
-      body: JSON.stringify({ currency: "USD", group: "row", account_type: "demo" }),
+    const headers = {
+      "Authorization": `Bearer ${accessToken}`,
+      "Deriv-App-ID": APP_ID,
+    };
+
+    // 1. Try to list existing accounts
+    const listRes = await fetch("https://api.derivws.com/trading/v1/options/accounts", {
+      method: "GET",
+      headers,
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error((data.errors && data.errors[0]?.message) || "Failed to fetch accounts");
-    // Response may be a single account object or a list — handle both
-    const accounts = Array.isArray(data) ? data : (data.accounts || [data]);
-    const demo = accounts.find(a => a.is_virtual || a.account_type === "demo") || accounts[0];
-    if (!demo) throw new Error("No account found");
-    return demo.account_id || demo.id || demo.loginid;
+    const listJson = await listRes.json();
+    if (!listRes.ok) throw new Error((listJson.errors && listJson.errors[0]?.message) || "Failed to fetch accounts");
+
+    let accounts = Array.isArray(listJson.data) ? listJson.data : (listJson.data ? [listJson.data] : []);
+
+    // 2. If no accounts exist yet, create a demo account
+    if (!accounts.length) {
+      const createRes = await fetch("https://api.derivws.com/trading/v1/options/accounts", {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ currency: "USD", group: "row", account_type: "demo" }),
+      });
+      const createJson = await createRes.json();
+      if (!createRes.ok) throw new Error((createJson.errors && createJson.errors[0]?.message) || "Failed to create demo account");
+      accounts = Array.isArray(createJson.data) ? createJson.data : (createJson.data ? [createJson.data] : []);
+    }
+
+    if (!accounts.length) throw new Error("No trading accounts found on this profile");
+    const demo = accounts.find(a => a.account_type === "demo") || accounts[0];
+    return demo.account_id;
   }
 
   async function fetchOTPViaBackend(accountId, accessToken) {
