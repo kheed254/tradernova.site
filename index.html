@@ -128,7 +128,7 @@
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "OTP fetch failed");
-    return data; // { ws_url }
+    return { ws_url: data.data?.url || data.url || data.ws_url };
   }
 
   // ── WebSocket hook ──────────────────────────────────────────────────────
@@ -207,8 +207,8 @@
     const authWs = useWS(null, {
       onOpen: () => { authWs.send({ balance:1, subscribe:1 }); authWs.send({ portfolio:1 }); },
       onMessage: (msg) => {
-        if (msg.msg_type === "balance")   setBalance(msg.balance);
-        if (msg.msg_type === "portfolio") setPortfolio(msg.portfolio?.contracts || []);
+        if (msg.msg_type === "balance")   { console.log("balance msg:", msg); setBalance(msg.balance); }
+        if (msg.msg_type === "portfolio") { console.log("portfolio msg:", msg); setPortfolio(msg.portfolio?.contracts || []); }
         if (msg.msg_type === "proposal")  { setProposal(msg.proposal); propIdRef.current = msg.proposal?.id; setPropLoading(false); }
         if (msg.msg_type === "buy")       { setBuyResult(msg.buy); setBuyLoading(false); showToast(msg.error ? "Buy failed: "+msg.error.message : "✓ Contract #"+msg.buy?.contract_id+" purchased", !msg.error); authWs.send({balance:1,subscribe:1}); authWs.send({portfolio:1}); }
         if (msg.error && msg.msg_type !== "buy") { showToast("Error: "+msg.error.message, false); setPropLoading(false); setBuyLoading(false); }
@@ -314,7 +314,7 @@
                   e("span", { style:{color:C.sub,fontSize:11} }, "Demo Account")
                 ),
                 e("div", { style:{color:C.muted,fontSize:11,letterSpacing:1} }, "BALANCE"),
-                e("div", { style:{color:C.text,fontSize:20,fontFamily:"monospace",fontWeight:700} }, "$"+fmtMoney(balance?.balance)),
+                e("div", { style:{color:C.text,fontSize:20,fontFamily:"monospace",fontWeight:700} }, "$"+fmtMoney(balance?.balance ?? balance?.amount ?? balance?.value)),
                 e("div", { style:{color:C.muted,fontSize:11} }, balance?.currency||"USD")
               )
             : authState === "loading"
