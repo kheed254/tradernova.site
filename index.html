@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TraderNova</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #080f1e; font-family: 'Inter', 'Segoe UI', system-ui, sans-serif; color: #f1f5f9; }
+    #root { display: flex; height: 100vh; overflow: hidden; }
+    select, input, button { font-family: inherit; }
+    ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-track { background: #0d1526; } ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 2px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script>
+  const e = React.createElement;
+  const { useState, useEffect, useRef, useCallback } = React;
+
+  // ── Config ──────────────────────────────────────────────────────────────
+  const APP_ID        = "1089"; // ⚠️ Replace with your own app_id from api.deriv.com when ready — 1089 is the public test ID
+  const PUBLIC_WS_URL = `wss://ws.derivws.com/websockets/v3?app_id=${APP_ID}`;
+  const AUTH_URL      = "https://auth.deriv.com/oauth2/auth";
+
+  // ⚠️ Replace with your actual registered client_id from developers.deriv.com
+  const OAUTH_CLIENT_ID    = "YOUR_CLIENT_ID";
+  const OAUTH_REDIRECT_URI = window.location.origin + window.location.pathname;
+
+  function fmt(n, d=5) { return n == null ? "—" : Number(n).toFixed(d); }
+  function fmtMoney(n) { return n == null ? "—" : Number(n).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}); }
+
+  // ── PKCE helpers ────────────────────────────────────────────────────────
+  function randomString(len) {
+    const charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
+    const arr = crypto.getRandomValues(new Uint8Array(len));
+    return Array.from(arr).map(v => charset[v % charset.length]).join("");
+  }
+
+  async function deriveChallenge(verifier) {
+    const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
+    return btoa(String.fromCharCode(...new Uint8Array(hash)))
+      .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  }
+
+  async function redirectToOAuth() {
+    const codeVerifier = randomString(64);
+    const state = randomString(32);
+    const codeChallenge = await deriveChallenge(codeVerifier);
+
+    sessionStorage.setItem("pkce_code_verifier", codeVerifier);
+    sessionStorage.setItem("oauth_state", state);
+
+    const params = new URLSearchParams({
+      response_type: "code",
+      client_id: OAUTH_CLIENT_ID,
+      redirect_uri: OAUTH_REDIRECT_URI,
+      scope: "trade account_manage",
+      state,
+      code_challenge: codeChallenge,
+      code_challenge_method: "S256",
+    });
+    window.location.href = `${AUTH_URL}?${params}`;
+  }
+
+  function getCallbackParams() {
+    const p = new URLSearchParams(window.location.search);
+    return { code: p.get("code"), state: p.get("state"), error: p.get("error") };
+  }
+
+  // Backend calls (token exchange + OTP happen server-side via /api/*)
+  async function exchangeCodeViaBackend(code, codeVerifier) {
+    const res = await fetch("/api/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        code,
+        code_verifier: codeVerifier,
+        redirect_uri: OAUTH_REDIRECT_URI,
+        client_id: OAUTH_CLIENT_ID,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Token exchange failed");
+    return data; // { access_token, expires_in, token_type }
+  }
+
+  async function getAccountId(accessToken) {
+    const res = await fetch("https://api.derivws.com/trading/v1/options/accounts", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${accessToken}`,
+        "Deriv-App-ID": APP_ID,
+      },
+      body: JSON.stringify({ currency: "USD", group: "row", account_type: "demo" }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error((data.errors && data.errors[0]?.message) || "Failed to fetch accounts");
+    // Response may be a single account object or a list — handle both
+    const accounts = Array.isArray(data) ? data : (data.accounts || [data]);
+    const demo = accounts.find(a => a.is_virtual || a.account_type === "demo") || accounts[0];
+    if (!demo) throw new Error("No account found");
+    return demo.account_id || demo.id || demo.loginid;
+  }
+
+  async function fetchOTPViaBackend(accountId, accessToken) {
+    const res = await fetch("/api/otp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ account_id: accountId, access_token: accessToken, app_id: APP_ID }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "OTP fetch failed");
+    return data; // { ws_url }
+  }
+
+  // ── WebSocket hook ──────────────────────────────────────────────────────
+  function useWS(url, cbs) {
+    const wsRef = useRef(null);
+    const cbRef = useRef(cbs);
+    useEffect(() => { cbRef.current = cbs; });
+    const connect = useCallback((wsUrl) => {
+      if (wsRef.current) wsRef.current.close();
+      const ws = new WebSocket(wsUrl || url);
+      wsRef.current = ws;
+      ws.onopen    = ev => cbRef.current.onOpen?.(ev);
+      ws.onclose   = ev => cbRef.current.onClose?.(ev);
+      ws.onerror   = ev => cbRef.current.onError?.(ev);
+      ws.onmessage = ev => { try { cbRef.current.onMessage?.(JSON.parse(ev.data)); } catch{} };
+    }, [url]);
+    const send = useCallback((data) => { if (wsRef.current?.readyState === 1) wsRef.current.send(JSON.stringify(data)); }, []);
+    useEffect(() => () => wsRef.current?.close(), []);
+    return { connect, send };
+  }
+
+  function Sparkline({ ticks, color }) {
+    if (!ticks || ticks.length < 2) return e("div", { style:{height:32} });
+    const min = Math.min(...ticks), max = Math.max(...ticks), range = max - min || 1;
+    const W = 120, H = 32;
+    const pts = ticks.map((v,i) => `${(i/(ticks.length-1))*W},${H-((v-min)/range)*H}`).join(" ");
+    return e("svg", { width:W, height:H, viewBox:`0 0 ${W} ${H}`, style:{display:"block"} },
+      e("polyline", { points:pts, fill:"none", stroke:color||"#22d3ee", strokeWidth:"1.5", strokeLinejoin:"round" })
+    );
+  }
+
+  function App() {
+    const [authState, setAuthState] = useState("idle"); // idle|loading|authed|error
+    const [authError, setAuthError] = useState(null);
+    const [symbols, setSymbols]     = useState([]);
+    const [selSym, setSelSym]       = useState(null);
+    const [contracts, setContracts] = useState([]);
+    const [selCon, setSelCon]       = useState(null);
+    const [ticks, setTicks]         = useState({});
+    const [pubStatus, setPubStatus] = useState("disconnected");
+    const [stake, setStake]         = useState("10");
+    const [dur, setDur]             = useState("5");
+    const [durUnit, setDurUnit]     = useState("t");
+    const [proposal, setProposal]   = useState(null);
+    const [propLoading, setPropLoading] = useState(false);
+    const [buyResult, setBuyResult] = useState(null);
+    const [buyLoading, setBuyLoading] = useState(false);
+    const [balance, setBalance]     = useState(null);
+    const [portfolio, setPortfolio] = useState([]);
+    const [tab, setTab]             = useState("market");
+    const [toast, setToast]         = useState(null);
+    const propIdRef = useRef(null);
+
+    const pubWs = useWS(PUBLIC_WS_URL, {
+      onOpen: () => { setPubStatus("connected"); pubWs.send({ active_symbols:"brief", product_type:"basic" }); },
+      onClose: () => setPubStatus("disconnected"),
+      onError: () => setPubStatus("error"),
+      onMessage: (msg) => {
+        if (msg.msg_type === "active_symbols") {
+          const syms = (msg.active_symbols||[]).filter(s=>!s.is_trading_suspended);
+          setSymbols(syms);
+          setSelSym(prev => prev || (syms[0]?.symbol ?? null));
+        }
+        if (msg.msg_type === "contracts_for") {
+          const list = msg.contracts_for?.available || [];
+          setContracts(list);
+          setSelCon(prev => prev || (list[0] ?? null));
+        }
+        if (msg.msg_type === "tick") {
+          const { symbol, quote } = msg.tick || {};
+          if (symbol && quote) setTicks(prev => ({ ...prev, [symbol]: [...(prev[symbol]||[]), quote].slice(-60) }));
+        }
+      }
+    });
+
+    const authWs = useWS(null, {
+      onOpen: () => { authWs.send({ balance:1, subscribe:1 }); authWs.send({ portfolio:1 }); },
+      onMessage: (msg) => {
+        if (msg.msg_type === "balance")   setBalance(msg.balance);
+        if (msg.msg_type === "portfolio") setPortfolio(msg.portfolio?.contracts || []);
+        if (msg.msg_type === "proposal")  { setProposal(msg.proposal); propIdRef.current = msg.proposal?.id; setPropLoading(false); }
+        if (msg.msg_type === "buy")       { setBuyResult(msg.buy); setBuyLoading(false); showToast(msg.error ? "Buy failed: "+msg.error.message : "✓ Contract #"+msg.buy?.contract_id+" purchased", !msg.error); authWs.send({balance:1,subscribe:1}); authWs.send({portfolio:1}); }
+        if (msg.error && msg.msg_type !== "buy") { showToast("Error: "+msg.error.message, false); setPropLoading(false); setBuyLoading(false); }
+      }
+    });
+
+    // Connect to public market data on load
+    useEffect(() => { pubWs.connect(); }, []);
+
+    // Handle OAuth callback
+    useEffect(() => {
+      const { code, state, error } = getCallbackParams();
+      if (error) { setAuthState("error"); setAuthError(error); return; }
+      if (!code) return;
+
+      const storedState = sessionStorage.getItem("oauth_state");
+      const codeVerifier = sessionStorage.getItem("pkce_code_verifier");
+
+      window.history.replaceState({}, "", window.location.pathname);
+
+      if (!storedState || state !== storedState) {
+        setAuthState("error"); setAuthError("State mismatch — please try logging in again.");
+        return;
+      }
+      if (!codeVerifier) {
+        setAuthState("error"); setAuthError("Missing code verifier — please try logging in again.");
+        return;
+      }
+
+      setAuthState("loading");
+      exchangeCodeViaBackend(code, codeVerifier)
+        .then(async (tokenData) => {
+          sessionStorage.removeItem("pkce_code_verifier");
+          sessionStorage.removeItem("oauth_state");
+          const accountId = await getAccountId(tokenData.access_token);
+          const otp = await fetchOTPViaBackend(accountId, tokenData.access_token);
+          setAuthState("authed");
+          return otp.ws_url;
+        })
+        .then(wsUrl => authWs.connect(wsUrl))
+        .catch(err => { setAuthState("error"); setAuthError(err.message); });
+    }, []);
+
+    // Subscribe to ticks + contracts when symbol changes
+    useEffect(() => {
+      if (!selSym || pubStatus !== "connected") return;
+      pubWs.send({ ticks: selSym, subscribe:1 });
+      pubWs.send({ contracts_for: selSym, currency:"USD", product_type:"basic" });
+    }, [selSym, pubStatus]);
+
+    function showToast(msg, ok=true) { setToast({msg,ok}); setTimeout(()=>setToast(null),4000); }
+
+    function getQuote() {
+      if (!selSym || !selCon) return;
+      setPropLoading(true); setProposal(null);
+      authWs.send({ proposal:1, amount:parseFloat(stake)||10, basis:"stake", contract_type:selCon.contract_type, currency:"USD", duration:parseInt(dur)||5, duration_unit:durUnit, symbol:selSym });
+    }
+
+    function buyNow() {
+      if (!propIdRef.current) return;
+      setBuyLoading(true);
+      authWs.send({ buy: propIdRef.current, price: parseFloat(proposal?.ask_price||stake) });
+    }
+
+    const symTicks   = selSym ? (ticks[selSym]||[]) : [];
+    const curTick    = symTicks.slice(-1)[0] ?? null;
+    const prevTick   = symTicks.length > 1 ? symTicks.slice(-2)[0] : null;
+    const tickUp     = curTick != null && prevTick != null && curTick > prevTick;
+    const tickDown   = curTick != null && prevTick != null && curTick < prevTick;
+
+    const C = { cyan:"#22d3ee", green:"#22c55e", red:"#f87171", bg:"#080f1e", card:"#0d1526", border:"#1e293b", muted:"#64748b", sub:"#94a3b8", text:"#f1f5f9", sidebar:"#060d1a" };
+
+    const navBtn = (key) => ({
+      display:"flex", alignItems:"center", gap:12, padding:"10px 20px", border:"none",
+      borderLeft: tab===key ? `2px solid ${C.cyan}` : "2px solid transparent",
+      background: tab===key ? "#0f172a" : "transparent",
+      color: tab===key ? C.cyan : C.sub,
+      cursor:"pointer", fontSize:14, fontWeight:500, width:"100%", textAlign:"left"
+    });
+
+    const fieldStyle = { background:"#0a1628", border:`1px solid ${C.border}`, borderRadius:8, color:C.text, padding:"9px 12px", fontSize:14, width:"100%", outline:"none" };
+
+    return e("div", { style:{display:"flex",height:"100vh",overflow:"hidden",background:C.bg} },
+
+      e("aside", { style:{width:220,background:C.sidebar,borderRight:`1px solid #0f172a`,display:"flex",flexDirection:"column",padding:"24px 0 16px",flexShrink:0} },
+        e("div", { style:{display:"flex",alignItems:"center",gap:10,padding:"0 20px 24px",borderBottom:"1px solid #0f172a"} },
+          e("span", { style:{background:C.cyan,color:"#060d1a",fontWeight:900,fontSize:14,borderRadius:6,padding:"3px 7px"} }, "TN"),
+          e("span", { style:{fontSize:16,fontWeight:700} }, "TraderNova")
+        ),
+        e("div", { style:{display:"flex",flexDirection:"column",gap:2,padding:"20px 0",flex:1} },
+          [["market","◈","Markets"],["trade","⚡","Trade"],["portfolio","▤","Portfolio"]].map(([key,icon,label]) =>
+            e("button", { key, style:navBtn(key), onClick:()=>setTab(key) },
+              e("span", { style:{fontSize:18,width:24} }, icon),
+              e("span", null, label)
+            )
+          )
+        ),
+        e("div", { style:{padding:"16px",borderTop:"1px solid #0f172a"} },
+          authState === "authed"
+            ? e("div", { style:{background:"#0a1628",border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 12px"} },
+                e("div", { style:{display:"flex",alignItems:"center",gap:6,marginBottom:6} },
+                  e("span", { style:{width:7,height:7,borderRadius:"50%",background:C.green,display:"inline-block"} }),
+                  e("span", { style:{color:C.sub,fontSize:11} }, "Demo Account")
+                ),
+                e("div", { style:{color:C.muted,fontSize:11,letterSpacing:1} }, "BALANCE"),
+                e("div", { style:{color:C.text,fontSize:20,fontFamily:"monospace",fontWeight:700} }, "$"+fmtMoney(balance?.balance)),
+                e("div", { style:{color:C.muted,fontSize:11} }, balance?.currency||"USD")
+              )
+            : authState === "loading"
+              ? e("div", { style:{color:C.muted,fontSize:12,textAlign:"center"} }, "Authenticating…")
+              : authState === "error"
+                ? e("div", { style:{color:C.red,fontSize:12,lineHeight:1.5} }, authError)
+                : e("button", { style:{background:C.cyan,color:"#060d1a",border:"none",borderRadius:8,padding:"10px 14px",fontSize:13,fontWeight:700,cursor:"pointer",width:"100%"}, onClick:redirectToOAuth }, "Connect Demo Account")
+        ),
+        e("div", { style:{display:"flex",alignItems:"center",gap:6,padding:"10px 20px 0"} },
+          e("span", { style:{width:7,height:7,borderRadius:"50%",background:pubStatus==="connected"?C.green:C.red,display:"inline-block"} }),
+          e("span", { style:{color:"#475569",fontSize:10,letterSpacing:1} }, "MARKET "+pubStatus.toUpperCase())
+        )
+      ),
+
+      e("main", { style:{flex:1,overflow:"auto",background:C.bg} },
+
+        tab === "market" && e("div", { style:{padding:32,maxWidth:1100} },
+          e("h2", { style:{fontSize:22,fontWeight:700,margin:"0 0 24px",letterSpacing:-0.5} }, "Live Markets"),
+          e("div", { style:{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:12} },
+            symbols.slice(0,30).map(sym => {
+              const st = ticks[sym.symbol]||[];
+              const last = st.slice(-1)[0], prev2 = st.slice(-2)[0];
+              const up = last!=null&&prev2!=null&&last>prev2, dn = last!=null&&prev2!=null&&last<prev2;
+              return e("div", { key:sym.symbol, onClick:()=>setSelSym(sym.symbol), style:{borderRadius:10,padding:"14px 14px 10px",cursor:"pointer",border:`1px solid ${sym.symbol===selSym?C.cyan:C.border}`,background:sym.symbol===selSym?"#0f172a":C.card,display:"flex",flexDirection:"column",gap:8} },
+                e("div", { style:{display:"flex",justifyContent:"space-between",alignItems:"flex-start"} },
+                  e("div", null,
+                    e("div", { style:{color:C.text,fontSize:13,fontWeight:600} }, sym.display_name),
+                    e("div", { style:{color:"#475569",fontSize:10,marginTop:2} }, sym.symbol)
+                  ),
+                  e("div", { style:{fontSize:14,fontFamily:"monospace",fontWeight:700,color:up?C.green:dn?C.red:C.sub} }, last!=null?fmt(last):"—")
+                ),
+                e(Sparkline, { ticks:st, color:up?C.green:dn?C.red:"#475569" })
+              );
+            })
+          )
+        ),
+
+        tab === "trade" && e("div", { style:{padding:32,maxWidth:900} },
+          e("h2", { style:{fontSize:22,fontWeight:700,margin:"0 0 24px",letterSpacing:-0.5} }, "Place a Trade"),
+          authState !== "authed" && e("div", { style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:24,marginBottom:24,maxWidth:340} },
+            e("p", { style:{color:C.sub,marginBottom:12} }, "Connect your demo account to trade."),
+            e("button", { style:{background:C.cyan,color:"#060d1a",border:"none",borderRadius:8,padding:"10px 14px",fontSize:13,fontWeight:700,cursor:"pointer",width:"100%"}, onClick:redirectToOAuth }, "Connect Demo Account")
+          ),
+          e("div", { style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:24,alignItems:"start"} },
+            e("div", { style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:24,display:"flex",flexDirection:"column",gap:16} },
+              e("label", { style:{fontSize:11,fontWeight:600,color:C.muted,letterSpacing:1,textTransform:"uppercase"} }, "Asset"),
+              e("select", { style:fieldStyle, value:selSym||"", onChange:ev=>setSelSym(ev.target.value) },
+                symbols.map(s => e("option", { key:s.symbol, value:s.symbol }, s.display_name))
+              ),
+              e("div", { style:{background:C.bg,border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"} },
+                e("div", { style:{color:C.muted,fontSize:11,letterSpacing:1,marginBottom:4} }, "LIVE PRICE"),
+                e("div", { style:{fontSize:28,fontFamily:"monospace",fontWeight:800,color:tickUp?C.green:tickDown?C.red:C.text,transition:"color 0.3s",marginBottom:6} }, curTick!=null?fmt(curTick):"—"),
+                e(Sparkline, { ticks:symTicks, color:C.cyan })
+              ),
+              e("label", { style:{fontSize:11,fontWeight:600,color:C.muted,letterSpacing:1,textTransform:"uppercase"} }, "Contract Type"),
+              e("select", { style:fieldStyle, value:selCon?.contract_type||"", onChange:ev=>setSelCon(contracts.find(c=>c.contract_type===ev.target.value)||null) },
+                contracts.map(c => e("option", { key:c.contract_type, value:c.contract_type }, c.contract_display_name||c.contract_type))
+              ),
+              e("div", { style:{display:"flex",gap:12} },
+                e("div", { style:{flex:1} },
+                  e("label", { style:{fontSize:11,fontWeight:600,color:C.muted,letterSpacing:1,textTransform:"uppercase",display:"block",marginBottom:6} }, "Stake (USD)"),
+                  e("input", { style:fieldStyle, type:"number", min:"1", value:stake, onChange:ev=>setStake(ev.target.value) })
+                ),
+                e("div", { style:{flex:1} },
+                  e("label", { style:{fontSize:11,fontWeight:600,color:C.muted,letterSpacing:1,textTransform:"uppercase",display:"block",marginBottom:6} }, "Duration"),
+                  e("div", { style:{display:"flex",gap:6} },
+                    e("input", { style:{...fieldStyle,flex:1}, type:"number", min:"1", value:dur, onChange:ev=>setDur(ev.target.value) }),
+                    e("select", { style:{...fieldStyle,width:75}, value:durUnit, onChange:ev=>setDurUnit(ev.target.value) },
+                      [["t","ticks"],["s","secs"],["m","mins"],["h","hours"],["d","days"]].map(([v,l])=>e("option",{key:v,value:v},l))
+                    )
+                  )
+                )
+              ),
+              e("button", {
+                style:{background:C.cyan,color:"#060d1a",border:"none",borderRadius:8,padding:11,fontSize:14,fontWeight:700,cursor:"pointer",width:"100%",opacity:authState!=="authed"?0.4:1},
+                disabled: authState!=="authed"||propLoading,
+                onClick: getQuote
+              }, propLoading?"Getting quote…":"Get Price Quote")
+            ),
+            e("div", { style:{display:"flex",flexDirection:"column",gap:16} },
+              proposal
+                ? e("div", { style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:20,display:"flex",flexDirection:"column",gap:14} },
+                    [["Ask Price","$"+fmtMoney(proposal.ask_price),C.text],["Payout","$"+fmtMoney(proposal.payout),C.green],["Entry Spot",fmt(proposal.spot),C.text]].map(([label,val,color])=>
+                      e("div", { key:label, style:{display:"flex",justifyContent:"space-between",borderBottom:`1px solid #0f172a`,paddingBottom:12} },
+                        e("span", { style:{color:C.muted,fontSize:12,fontWeight:600} }, label),
+                        e("span", { style:{color,fontFamily:"monospace",fontSize:15,fontWeight:700} }, val)
+                      )
+                    ),
+                    proposal.longcode && e("div", { style:{color:C.sub,fontSize:12,lineHeight:1.6,borderBottom:`1px solid #0f172a`,paddingBottom:12} }, proposal.longcode),
+                    e("button", { style:{background:C.green,color:"#052e16",border:"none",borderRadius:8,padding:13,fontSize:15,fontWeight:800,cursor:"pointer",width:"100%",opacity:buyLoading?0.5:1}, disabled:buyLoading, onClick:buyNow },
+                      buyLoading?"Buying…":`Buy for $${fmtMoney(proposal.ask_price)}`
+                    )
+                  )
+                : e("div", { style:{background:C.card,border:`1px dashed ${C.border}`,borderRadius:12,padding:40,textAlign:"center",minHeight:200,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"} },
+                    e("div", { style:{fontSize:40} }, "⚡"),
+                    e("p", { style:{color:"#475569",marginTop:12,fontSize:14} }, "Select an asset and contract, then get a price quote.")
+                  ),
+              buyResult && e("div", { style:{background:"#052e16",border:`1px solid ${C.green}`,borderRadius:10,padding:"16px 20px"} },
+                e("div", { style:{color:C.green,fontWeight:700,marginBottom:8} }, "Contract Purchased"),
+                e("div", { style:{color:C.sub,fontSize:13} }, "Contract ID: "+buyResult.contract_id),
+                e("div", { style:{color:C.sub,fontSize:13} }, "Transaction: "+buyResult.transaction_id)
+              )
+            )
+          )
+        ),
+
+        tab === "portfolio" && e("div", { style:{padding:32,maxWidth:900} },
+          e("h2", { style:{fontSize:22,fontWeight:700,margin:"0 0 24px",letterSpacing:-0.5} }, "Portfolio"),
+          authState !== "authed"
+            ? e("div", { style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:32,textAlign:"center",maxWidth:340} },
+                e("p", { style:{color:C.sub,marginBottom:12} }, "Connect your demo account to view your portfolio."),
+                e("button", { style:{background:C.cyan,color:"#060d1a",border:"none",borderRadius:8,padding:"10px 14px",fontSize:13,fontWeight:700,cursor:"pointer",width:"100%"}, onClick:redirectToOAuth }, "Connect Demo Account")
+              )
+            : portfolio.length === 0
+              ? e("div", { style:{textAlign:"center",padding:"80px 20px",color:"#475569"} },
+                  e("div", { style:{fontSize:48} }, "▤"),
+                  e("p", { style:{marginTop:16} }, "No open contracts. Place a trade to get started.")
+                )
+              : e("div", { style:{border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden"} },
+                  e("div", { style:{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr 1fr",padding:"12px 20px",background:"#0a1628",fontSize:11,fontWeight:700,color:"#475569",letterSpacing:1,textTransform:"uppercase",borderBottom:`1px solid ${C.border}`} },
+                    ["Asset","Type","Buy Price","Payout","Expiry"].map(h=>e("span",{key:h},h))
+                  ),
+                  portfolio.map(c =>
+                    e("div", { key:c.contract_id, style:{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr 1fr",padding:"14px 20px",fontSize:13,color:C.sub,borderBottom:`1px solid #0f172a`,alignItems:"center"} },
+                      e("span", { style:{color:C.text,fontWeight:600} }, c.underlying_symbol||c.symbol),
+                      e("span", null, c.contract_type),
+                      e("span", { style:{fontFamily:"monospace"} }, "$"+fmtMoney(c.buy_price)),
+                      e("span", { style:{color:C.green,fontFamily:"monospace"} }, "$"+fmtMoney(c.payout)),
+                      e("span", { style:{fontSize:12} }, c.expiry_time ? new Date(c.expiry_time*1000).toLocaleTimeString() : "—")
+                    )
+                  )
+                )
+        )
+      ),
+
+      toast && e("div", { style:{position:"fixed",bottom:24,right:24,padding:"14px 20px",borderRadius:10,border:"1px solid",fontSize:13,fontWeight:600,maxWidth:360,zIndex:1000,boxShadow:"0 8px 32px rgba(0,0,0,0.5)",background:toast.ok?"#052e16":"#1f0a0a",borderColor:toast.ok?C.green:C.red,color:toast.ok?C.green:C.red} }, toast.msg)
+    );
+  }
+
+  ReactDOM.createRoot(document.getElementById('root')).render(e(App));
+  </script>
+</body>
+</html>
