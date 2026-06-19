@@ -26,7 +26,7 @@
   const AUTH_URL      = "https://auth.deriv.com/oauth2/auth";
 
   // ⚠️ Replace with your actual registered client_id from developers.deriv.com
-  const OAUTH_CLIENT_ID    = "33B0MY3PLWPg4vDGcGwIG";
+  const OAUTH_CLIENT_ID    = "YOUR_CLIENT_ID";
   const OAUTH_REDIRECT_URI = window.location.origin + window.location.pathname;
 
   function fmt(n, d=5) { return n == null ? "—" : Number(n).toFixed(d); }
@@ -89,22 +89,28 @@
 
   async function getAccountId(accessToken) {
     const res = await fetch("https://api.derivws.com/trading/v1/options/accounts", {
-      headers: { Authorization: `Bearer ${accessToken}` },
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${accessToken}`,
+        "Deriv-App-ID": APP_ID,
+      },
+      body: JSON.stringify({ currency: "USD", group: "row", account_type: "demo" }),
     });
     const data = await res.json();
-    if (!res.ok) throw new Error("Failed to fetch accounts");
-    // Prefer a demo account if present
-    const accounts = data.accounts || data || [];
+    if (!res.ok) throw new Error((data.errors && data.errors[0]?.message) || "Failed to fetch accounts");
+    // Response may be a single account object or a list — handle both
+    const accounts = Array.isArray(data) ? data : (data.accounts || [data]);
     const demo = accounts.find(a => a.is_virtual || a.account_type === "demo") || accounts[0];
     if (!demo) throw new Error("No account found");
-    return demo.account_id || demo.id;
+    return demo.account_id || demo.id || demo.loginid;
   }
 
   async function fetchOTPViaBackend(accountId, accessToken) {
     const res = await fetch("/api/otp", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ account_id: accountId, access_token: accessToken }),
+      body: JSON.stringify({ account_id: accountId, access_token: accessToken, app_id: APP_ID }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "OTP fetch failed");
