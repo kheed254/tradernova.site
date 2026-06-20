@@ -677,7 +677,8 @@
             const max = Math.max(...highs), min = Math.min(...lows);
             const range = (max - min) || (max * 0.001) || 1;
             const yFor = (price) => padT + plotH - ((price - min) / range) * plotH;
-            const candleW = plotW / candles.length;
+            const maxVisible = 80;
+            const candleW = plotW / maxVisible;
             const bodyW = Math.max(2, candleW * 0.6);
 
             const gridLines = [0,0.25,0.5,0.75,1].map(f => {
@@ -690,16 +691,17 @@
             });
 
             const candleEls = candles.map((c, i) => {
-              const x = padL + i * candleW + candleW/2;
+              const offsetFromRight = candles.length - 1 - i;
+              const x = W - padR - offsetFromRight * candleW - candleW/2;
               const up = c.close >= c.open;
               const color = up ? "#22c55e" : "#f87171";
               const yHigh = yFor(c.high), yLow = yFor(c.low);
               const yOpen = yFor(c.open), yClose = yFor(c.close);
               const bodyTop = Math.min(yOpen, yClose);
-              const bodyH = Math.max(1, Math.abs(yClose - yOpen));
+              const bodyH = Math.max(2, Math.abs(yClose - yOpen));
               return e("g", { key:c.time },
                 e("line", { x1:x, y1:yHigh, x2:x, y2:yLow, stroke:color, strokeWidth:1 }),
-                e("rect", { x:x-bodyW/2, y:bodyTop, width:bodyW, height:bodyH, fill:color })
+                e("rect", { x:x-bodyW/2, y:bodyTop, width:bodyW, height:bodyH, fill:color, rx:1 })
               );
             });
 
