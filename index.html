@@ -203,6 +203,12 @@
     const [botTakeProfit, setBotTakeProfit] = useState("10");
     const [botStopLoss, setBotStopLoss] = useState("10");
     const [botMaxStake, setBotMaxStake] = useState("20");
+
+    // Risk Calculator state
+    const [rcBaseStake, setRcBaseStake]   = useState("1");
+    const [rcMultiplier, setRcMultiplier] = useState("2");
+    const [rcMaxLosses, setRcMaxLosses]   = useState("6");
+    const [rcPayoutPct, setRcPayoutPct]   = useState("85");
     const [botRunning, setBotRunning]   = useState(false);
     const [botConfirming, setBotConfirming] = useState(false);
     const [botPL, setBotPL]             = useState(0);
@@ -497,7 +503,7 @@
           e("span", { style:{fontSize:16,fontWeight:700} }, "TraderNova")
         ),
         e("div", { style:{display:"flex",flexDirection:"column",gap:2,padding:"20px 0",flex:1} },
-          [["market","◈","Markets"],["trade","⚡","Trade"],["scanner","◎","Scanner"],["bulk","▣","Bulk Trader"],["portfolio","▤","Portfolio"]].map(([key,icon,label]) =>
+          [["market","◈","Markets"],["trade","⚡","Trade"],["scanner","◎","Scanner"],["bulk","▣","Bulk Trader"],["risk","⛨","Risk Calc"],["portfolio","▤","Portfolio"]].map(([key,icon,label]) =>
             e("button", { key, style:navBtn(key), onClick:()=>setTab(key) },
               e("span", { style:{fontSize:18,width:24} }, icon),
               e("span", null, label)
@@ -841,6 +847,100 @@
             )
           )
         ),
+
+        tab === "risk" && (() => {
+          const base = parseFloat(rcBaseStake) || 1;
+          const mult = parseFloat(rcMultiplier) || 2;
+          const maxLosses = Math.max(1, Math.min(15, parseInt(rcMaxLosses) || 6));
+          const payoutPct = parseFloat(rcPayoutPct) || 85;
+
+          const rows = [];
+          let cumulative = 0;
+          for (let i = 0; i < maxLosses; i++) {
+            const stake = +(base * Math.pow(mult, i)).toFixed(2);
+            cumulative = +(cumulative + stake).toFixed(2);
+            const recoveredProfit = +((stake * payoutPct / 100) - cumulative + stake).toFixed(2);
+            rows.push({ losses: i+1, stake, cumulative, recoveredProfit });
+          }
+          const finalRow = rows[rows.length - 1];
+
+          return e("div", { style:{padding:32,maxWidth:900} },
+            e("h2", { style:{fontSize:22,fontWeight:700,margin:"0 0 8px",letterSpacing:-0.5} }, "Risk Calculator"),
+            e("p", { style:{color:C.muted,fontSize:13,marginBottom:24} }, "See exactly how a Martingale sequence grows before you run the bot."),
+
+            e("div", { style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:24,alignItems:"start"} },
+
+              // ── Inputs ──
+              e("div", { style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:24,display:"flex",flexDirection:"column",gap:16} },
+                e("div", null,
+                  e("label", { style:{fontSize:11,fontWeight:600,color:C.muted,letterSpacing:1,textTransform:"uppercase",display:"block",marginBottom:6} }, "Base Stake ($)"),
+                  e("input", { style:fieldStyle, type:"number", min:0.35, step:0.01, value:rcBaseStake, onChange:ev=>setRcBaseStake(ev.target.value) })
+                ),
+                e("div", null,
+                  e("label", { style:{fontSize:11,fontWeight:600,color:C.muted,letterSpacing:1,textTransform:"uppercase",display:"block",marginBottom:6} }, "Martingale Multiplier"),
+                  e("input", { style:fieldStyle, type:"number", min:1, step:0.1, value:rcMultiplier, onChange:ev=>setRcMultiplier(ev.target.value) })
+                ),
+                e("div", null,
+                  e("label", { style:{fontSize:11,fontWeight:600,color:C.muted,letterSpacing:1,textTransform:"uppercase",display:"block",marginBottom:6} }, "Consecutive Losses to Simulate"),
+                  e("input", { style:fieldStyle, type:"number", min:1, max:15, value:rcMaxLosses, onChange:ev=>setRcMaxLosses(ev.target.value) })
+                ),
+                e("div", null,
+                  e("label", { style:{fontSize:11,fontWeight:600,color:C.muted,letterSpacing:1,textTransform:"uppercase",display:"block",marginBottom:6} }, "Approx Payout (%)"),
+                  e("input", { style:fieldStyle, type:"number", min:50, max:99, value:rcPayoutPct, onChange:ev=>setRcPayoutPct(ev.target.value) }),
+                  e("p", { style:{color:"#475569",fontSize:11,marginTop:6} }, "Used to estimate recovery profit after a win. Check your contract's actual payout % on the Trade tab.")
+                )
+              ),
+
+              // ── Summary ──
+              e("div", { style:{display:"flex",flexDirection:"column",gap:16} },
+                e("div", { style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:20} },
+                  e("div", { style:{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:1,marginBottom:10} }, `AFTER ${maxLosses} CONSECUTIVE LOSSES`),
+                  e("div", { style:{display:"flex",justifyContent:"space-between",marginBottom:10} },
+                    e("span", { style:{color:C.sub,fontSize:13} }, "Next stake required"),
+                    e("span", { style:{fontFamily:"monospace",fontWeight:700,color:"#fb923c"} }, "$"+finalRow.stake.toFixed(2))
+                  ),
+                  e("div", { style:{display:"flex",justifyContent:"space-between",marginBottom:10} },
+                    e("span", { style:{color:C.sub,fontSize:13} }, "Total at risk (cumulative)"),
+                    e("span", { style:{fontFamily:"monospace",fontWeight:700,color:"#f87171"} }, "$"+finalRow.cumulative.toFixed(2))
+                  ),
+                  e("div", { style:{display:"flex",justifyContent:"space-between"} },
+                    e("span", { style:{color:C.sub,fontSize:13} }, "Min. balance recommended"),
+                    e("span", { style:{fontFamily:"monospace",fontWeight:700,color:C.text} }, "$"+(finalRow.cumulative * 1.5).toFixed(2))
+                  )
+                ),
+                e("div", { style:{background:"#1f1206",border:"1px solid #fb923c",borderRadius:10,padding:"14px 16px"} },
+                  e("p", { style:{color:"#fb923c",fontSize:12,lineHeight:1.6} },
+                    `⚠️ A ${maxLosses}-loss streak is realistic — on a near-50/50 contract, the probability of this happening within 100 rounds is meaningfully high. Set your Stop Loss and Max Stake Cap in Bulk Trader below this total.`
+                  )
+                )
+              )
+            ),
+
+            // ── Stake progression table ──
+            e("div", { style:{marginTop:24,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden"} },
+              e("div", { style:{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",padding:"12px 20px",background:"#0a1628",fontSize:11,fontWeight:700,color:"#475569",letterSpacing:1,textTransform:"uppercase",borderBottom:`1px solid ${C.border}`} },
+                ["Loss #","Stake","Cumulative","If Won Next"].map(h=>e("span",{key:h},h))
+              ),
+              rows.map(r => e("div", { key:r.losses, style:{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",padding:"10px 20px",fontSize:13,color:C.sub,borderBottom:"1px solid #0f172a",alignItems:"center"} },
+                e("span", { style:{color:C.text,fontWeight:600} }, "#"+r.losses),
+                e("span", { style:{fontFamily:"monospace"} }, "$"+r.stake.toFixed(2)),
+                e("span", { style:{fontFamily:"monospace",color:"#f87171"} }, "$"+r.cumulative.toFixed(2)),
+                e("span", { style:{fontFamily:"monospace",color: r.recoveredProfit>=0?C.green:"#f87171"} }, (r.recoveredProfit>=0?"+":"")+"$"+r.recoveredProfit.toFixed(2))
+              ))
+            ),
+
+            e("button", {
+              style:{marginTop:20,background:C.cyan,color:"#060d1a",border:"none",borderRadius:8,padding:"11px 20px",fontSize:13,fontWeight:700,cursor:"pointer"},
+              onClick: () => {
+                setBotBaseStake(rcBaseStake);
+                setBotMultiplier(rcMultiplier);
+                setBotMaxStake(String(finalRow.cumulative));
+                setTab("bulk");
+                showToast("Settings applied to Bulk Trader", true);
+              }
+            }, "Apply to Bulk Trader →")
+          );
+        })(),
 
         tab === "portfolio" && e("div", { style:{padding:32,maxWidth:900} },
           e("h2", { style:{fontSize:22,fontWeight:700,margin:"0 0 24px",letterSpacing:-0.5} }, "Portfolio"),
