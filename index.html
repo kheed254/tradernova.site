@@ -197,6 +197,8 @@
     const [botSym, setBotSym]           = useState(null);
     const [botType, setBotType]         = useState("evenodd"); // evenodd | overunder
     const [botPrediction, setBotPrediction] = useState("even"); // even|odd | over|under
+    const [botRecoveryPrediction, setBotRecoveryPrediction] = useState("odd"); // prediction to switch to after a loss
+    const [botUseMartingale, setBotUseMartingale] = useState(true);
     const [botBarrier, setBotBarrier]   = useState(5);
     const [botBaseStake, setBotBaseStake] = useState("1");
     const [botMultiplier, setBotMultiplier] = useState("2");
@@ -230,16 +232,18 @@
     const [botStatus, setBotStatus]     = useState("idle"); // idle | waiting_proposal | in_trade
     const botRunningRef = useRef(false);
     const botStateRef   = useRef({}); // holds latest bot config + running totals for closures
+    const currentPredictionRef = useRef("even"); // tracks active prediction across a session (for recovery switching)
     useEffect(() => { botRunningRef.current = botRunning; }, [botRunning]);
     useEffect(() => {
       botStateRef.current = {
         sym: botSym, type: botType, prediction: botPrediction, barrier: botBarrier,
+        recoveryPrediction: botRecoveryPrediction, useMartingale: botUseMartingale,
         baseStake: parseFloat(botBaseStake) || 1, multiplier: parseFloat(botMultiplier) || 2,
         takeProfit: parseFloat(botTakeProfit) || 10, stopLoss: parseFloat(botStopLoss) || 10,
         maxStake: parseFloat(botMaxStake) || 20,
         pl: botPL, stake: botStake,
       };
-    }, [botSym, botType, botPrediction, botBarrier, botBaseStake, botMultiplier, botTakeProfit, botStopLoss, botMaxStake, botPL, botStake]);
+    }, [botSym, botType, botPrediction, botBarrier, botRecoveryPrediction, botUseMartingale, botBaseStake, botMultiplier, botTakeProfit, botStopLoss, botMaxStake, botPL, botStake]);
 
     const pubWs = useWS(PUBLIC_WS_URL, {
       onOpen: () => { setPubStatus("connected"); pubWs.send({ active_symbols:"brief", product_type:"basic" }); },
@@ -332,12 +336,16 @@
             const st = botStateRef.current;
             const newPL = st.pl + profit;
             setBotPL(newPL);
-            setBotTrades(prev => [{ time: Date.now(), stake: st.stake, won, profit, contractId: c.contract_id }, ...prev].slice(0, 50));
+            setBotTrades(prev => [{ time: Date.now(), stake: st.stake, won, profit, contractId: c.contract_id, prediction: currentPredictionRef.current }, ...prev].slice(0, 50));
             setAuthBalanceRefresh();
-            // Martingale: increase stake on loss, reset on win
-            const rawNextStake = won ? st.baseStake : +(st.stake * st.multiplier).toFixed(2);
+            // Martingale: increase stake on loss, reset on win (only if enabled)
+            const rawNextStake = won
+              ? st.baseStake
+              : (st.useMartingale ? +(st.stake * st.multiplier).toFixed(2) : st.baseStake);
             const nextStake = Math.min(rawNextStake, st.maxStake);
             setBotStake(nextStake);
+            // Recovery prediction: switch prediction after a loss, revert to initial after a win
+            currentPredictionRef.current = won ? st.prediction : st.recoveryPrediction;
             // Check stop conditions
             if (newPL >= st.takeProfit) {
               showToast(`🎯 Take-profit hit! +$${newPL.toFixed(2)}`, true);
@@ -386,9 +394,10 @@
       if (!botRunning || botStatus !== "idle") return;
       const st = botStateRef.current;
       if (!st.sym) { showToast("Bot: select a market first", false); setBotRunning(false); return; }
+      const activePrediction = currentPredictionRef.current;
       const contract_type = st.type === "evenodd"
-        ? (st.prediction === "even" ? "DIGITEVEN" : "DIGITODD")
-        : (st.prediction === "over" ? "DIGITOVER" : "DIGITUNDER");
+        ? (activePrediction === "even" ? "DIGITEVEN" : "DIGITODD")
+        : (activePrediction === "over" ? "DIGITOVER" : "DIGITUNDER");
       const req = {
         proposal: 1, amount: st.stake, basis: "stake",
         contract_type, currency: "USD", duration: 1, duration_unit: "t",
@@ -504,6 +513,7 @@
       setBotStake(parseFloat(botBaseStake) || 1);
       setBotTrades([]);
       setBotStatus("idle");
+      currentPredictionRef.current = botPrediction;
       setBotRunning(true);
     }
     function stopBot() {
@@ -924,6 +934,25 @@
                           e("input", { style:fieldStyle, type:"number", min:0, max:9, value:botBarrier, onChange:ev=>setBotBarrier(Math.max(0,Math.min(9,Number(ev.target.value)))) })
                         )
                       ),
+
+                  e("div", null,
+                    e("label", { style:{fontSize:11,fontWeight:600,color:"#a78bfa",letterSpacing:1,textTransform:"uppercase",display:"block",marginBottom:6} }, "Recovery Prediction (after a loss)"),
+                    botType === "evenodd"
+                      ? e("div", { style:{display:"flex",gap:8} },
+                          e("button", { style:{flex:1,padding:"8px",borderRadius:8,border:`1px solid ${botRecoveryPrediction==="even"?"#a78bfa":C.border}`,background:botRecoveryPrediction==="even"?"#1e1147":"#0a1628",color:botRecoveryPrediction==="even"?"#a78bfa":C.sub,fontSize:12,fontWeight:600,cursor:"pointer"}, onClick:()=>setBotRecoveryPrediction("even") }, "EVEN"),
+                          e("button", { style:{flex:1,padding:"8px",borderRadius:8,border:`1px solid ${botRecoveryPrediction==="odd"?"#a78bfa":C.border}`,background:botRecoveryPrediction==="odd"?"#1e1147":"#0a1628",color:botRecoveryPrediction==="odd"?"#a78bfa":C.sub,fontSize:12,fontWeight:600,cursor:"pointer"}, onClick:()=>setBotRecoveryPrediction("odd") }, "ODD")
+                        )
+                      : e("div", { style:{display:"flex",gap:8} },
+                          e("button", { style:{flex:1,padding:"8px",borderRadius:8,border:`1px solid ${botRecoveryPrediction==="over"?"#a78bfa":C.border}`,background:botRecoveryPrediction==="over"?"#1e1147":"#0a1628",color:botRecoveryPrediction==="over"?"#a78bfa":C.sub,fontSize:12,fontWeight:600,cursor:"pointer"}, onClick:()=>setBotRecoveryPrediction("over") }, "OVER"),
+                          e("button", { style:{flex:1,padding:"8px",borderRadius:8,border:`1px solid ${botRecoveryPrediction==="under"?"#a78bfa":C.border}`,background:botRecoveryPrediction==="under"?"#1e1147":"#0a1628",color:botRecoveryPrediction==="under"?"#a78bfa":C.sub,fontSize:12,fontWeight:600,cursor:"pointer"}, onClick:()=>setBotRecoveryPrediction("under") }, "UNDER")
+                        ),
+                    e("p", { style:{color:"#475569",fontSize:11,marginTop:6} }, "Leave same as initial prediction to disable recovery switching.")
+                  ),
+
+                  e("div", { style:{display:"flex",alignItems:"center",gap:10,padding:"10px 0"} },
+                    e("input", { type:"checkbox", checked:botUseMartingale, onChange:ev=>setBotUseMartingale(ev.target.checked), style:{width:16,height:16,cursor:"pointer"} }),
+                    e("label", { style:{fontSize:13,color:C.sub,cursor:"pointer"}, onClick:()=>setBotUseMartingale(!botUseMartingale) }, "Use Martingale (increase stake after a loss)")
+                  ),
 
                   e("div", { style:{display:"flex",gap:12} },
                     e("div", { style:{flex:1} },
