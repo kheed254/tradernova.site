@@ -186,8 +186,10 @@
     // Scanner state
     const [scanSym, setScanSym]       = useState(null);
     const [scanTicks, setScanTicks]   = useState([]); // array of last digits
+    const [scanPrices, setScanPrices] = useState([]); // array of raw prices (for Rise/Fall)
     const [scanCount, setScanCount]   = useState(1000);
     const [scanRunning, setScanRunning] = useState(false);
+    const [scanMatchDigit, setScanMatchDigit] = useState(5);
     const scanSymRef = useRef(null);
     const scanCountRef = useRef(1000);
     useEffect(() => { scanSymRef.current = scanRunning ? scanSym : null; }, [scanSym, scanRunning]);
@@ -272,6 +274,7 @@
             if (symbol === scanSymRef.current) {
               const lastDigit = Number(String(quote).replace(".", "").slice(-1));
               setScanTicks(prev => [...prev, lastDigit].slice(-scanCountRef.current));
+              setScanPrices(prev => [...prev, parseFloat(quote)].slice(-scanCountRef.current));
             }
             if (symbol === chartSymRef.current) {
               const price = parseFloat(quote);
@@ -470,6 +473,7 @@
     function startScan(sym) {
       setScanSym(sym);
       setScanTicks([]);
+      setScanPrices([]);
       setScanRunning(true);
       if (pubStatus === "connected") pubWs.send({ ticks: sym, subscribe: 1 });
     }
@@ -791,23 +795,65 @@
           const counts = Array(10).fill(0);
           scanTicks.forEach(d => { if (d >= 0 && d <= 9) counts[d]++; });
           const total = scanTicks.length;
-          const pct = (n) => total ? ((n/total)*100).toFixed(2) : "0.00";
+          const pct = (n) => total ? ((n/total)*100).toFixed(1) : "0.0";
           const overCount  = scanTicks.filter(d => d > 5).length;
           const underCount = scanTicks.filter(d => d < 5).length;
           const evenCount  = scanTicks.filter(d => d % 2 === 0).length;
           const oddCount   = scanTicks.filter(d => d % 2 !== 0).length;
-          const barRow = (label, count, color) => e("div", { key:label, style:{display:"flex",alignItems:"center",gap:12} },
+          const matchCount  = scanTicks.filter(d => d === scanMatchDigit).length;
+          const differCount = scanTicks.filter(d => d !== scanMatchDigit).length;
+          const riseCount = scanPrices.filter((p,i) => i > 0 && p > scanPrices[i-1]).length;
+          const fallCount = scanPrices.filter((p,i) => i > 0 && p < scanPrices[i-1]).length;
+          const moveTotal = Math.max(1, riseCount + fallCount);
+
+          // streak: how many in a row currently favor one side, for the small badge top-right of each panel
+          const streakOf = (arr, testFn) => {
+            let streak = 0, side = null;
+            for (let i = arr.length - 1; i >= 0; i--) {
+              const s = testFn(arr[i], i, arr);
+              if (s == null) continue;
+              if (side === null) { side = s; streak = 1; }
+              else if (s === side) streak++;
+              else break;
+            }
+            return { streak, side };
+          };
+          const ouStreak = streakOf(scanTicks, d => d === 5 ? null : (d > 5 ? "Over" : "Under"));
+          const mdStreak = streakOf(scanTicks, d => d === scanMatchDigit ? "Match" : "Differ");
+          const eoStreak = streakOf(scanTicks, d => d % 2 === 0 ? "Even" : "Odd");
+          const rfStreak = streakOf(scanPrices, (p,i,arr) => i === 0 ? null : (p > arr[i-1] ? "Rise" : p < arr[i-1] ? "Fall" : null));
+
+          const barRow = (label, count, color, denom) => e("div", { key:label, style:{display:"flex",alignItems:"center",gap:12} },
             e("span", { style:{width:60,color,fontSize:12,fontWeight:700} }, label),
             e("div", { style:{flex:1,height:8,background:"#0a1628",borderRadius:4,overflow:"hidden"} },
-              e("div", { style:{width:pct(count)+"%",height:"100%",background:color,transition:"width 0.3s"} })
+              e("div", { style:{width:(denom?((count/denom)*100).toFixed(1):pct(count))+"%",height:"100%",background:color,transition:"width 0.3s"} })
             ),
-            e("span", { style:{width:60,textAlign:"right",fontFamily:"monospace",fontSize:13,color} }, pct(count)+"%")
+            e("span", { style:{width:50,textAlign:"right",fontFamily:"monospace",fontSize:13,color} }, (denom?((count/denom)*100).toFixed(1):pct(count))+"%")
           );
 
-          return e("div", { style:{padding:32,maxWidth:900} },
+          const resultStrip = (arr, mapFn, colorMap) => {
+            const recent = arr.slice(-10);
+            return e("div", { style:{display:"flex",gap:4,marginTop:10,flexWrap:"wrap"} },
+              recent.map((v,i) => {
+                const label = mapFn(v, arr.length - recent.length + i, arr);
+                if (label == null) return null;
+                return e("span", { key:i, style:{
+                  width:22,height:22,borderRadius:5,display:"flex",alignItems:"center",justifyContent:"center",
+                  fontSize:10,fontWeight:800,color:"#fff",background:colorMap[label]
+                } }, label[0]);
+              })
+            );
+          };
+
+          const panelHeader = (title, streak) => e("div", { style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4} },
+            e("div", { style:{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:1} }, title),
+            streak.streak > 1 && e("span", { style:{fontSize:11,fontWeight:700,color:C.cyan} }, streak.streak+"x "+streak.side)
+          );
+
+          return e("div", { style:{padding:32,maxWidth:1000} },
             e("h2", { style:{fontSize:22,fontWeight:700,margin:"0 0 24px",letterSpacing:-0.5} }, "Signal Scanner"),
 
-            e("div", { style:{display:"flex",gap:12,alignItems:"flex-end",marginBottom:24,flexWrap:"wrap"} },
+            e("div", { style:{display:"flex",gap:12,alignItems:"flex-end",marginBottom:20,flexWrap:"wrap"} },
               e("div", { style:{flex:1,minWidth:200} },
                 e("label", { style:{fontSize:11,fontWeight:600,color:C.muted,letterSpacing:1,textTransform:"uppercase",display:"block",marginBottom:6} }, "Market"),
                 e("select", { style:fieldStyle, value:scanSym||"", onChange:ev=>startScan(ev.target.value) },
@@ -823,7 +869,11 @@
               ),
               scanRunning
                 ? e("button", { style:{background:"#f87171",color:"#1f0a0a",border:"none",borderRadius:8,padding:"10px 18px",fontSize:13,fontWeight:700,cursor:"pointer"}, onClick:stopScan }, "Stop")
-                : e("button", { style:{background:C.cyan,color:"#060d1a",border:"none",borderRadius:8,padding:"10px 18px",fontSize:13,fontWeight:700,cursor:"pointer",opacity:scanSym?1:0.4}, disabled:!scanSym, onClick:()=>startScan(scanSym) }, "Start")
+                : e("button", { style:{background:C.cyan,color:"#060d1a",border:"none",borderRadius:8,padding:"10px 18px",fontSize:13,fontWeight:700,cursor:"pointer",opacity:scanSym?1:0.4}, disabled:!scanSym, onClick:()=>startScan(scanSym) }, "Start"),
+              scanSym && e("div", { style:{marginLeft:"auto",textAlign:"right"} },
+                e("div", { style:{fontSize:10,color:C.muted,letterSpacing:1} }, "LIVE PRICE"),
+                e("div", { style:{fontSize:18,fontFamily:"monospace",fontWeight:700,color:C.cyan} }, scanPrices.length ? scanPrices[scanPrices.length-1].toFixed(4) : "—")
+              )
             ),
 
             !scanSym
@@ -836,33 +886,69 @@
                     e("span", { style:{color:C.sub,fontSize:13} }, "Sampling: ", e("strong",{style:{color:C.text}}, total+" / "+scanCount), " ticks", scanRunning ? "  •  live" : "  •  stopped"),
                   ),
 
-                  // Digit circles
+                  // Digit circles — single row, bigger
                   e("div", { style:{display:"grid",gridTemplateColumns:"repeat(10,1fr)",gap:8,marginBottom:28} },
                     counts.map((c,d) => {
                       const p = pct(c);
-                      const hot = total > 0 && c === Math.max(...counts);
-                      return e("div", { key:d, style:{
-                        aspectRatio:"1",borderRadius:"50%",border:`2px solid ${hot?C.cyan:C.border}`,
+                      const maxC = Math.max(...counts);
+                      const minC = total ? Math.min(...counts.filter((_,i)=>true)) : 0;
+                      const hot = total > 0 && c === maxC;
+                      const cold = total > 0 && c === Math.min(...counts);
+                      const isMatchTarget = d === scanMatchDigit;
+                      const borderColor = hot ? "#f87171" : cold ? C.cyan : (isMatchTarget ? "#a78bfa" : C.border);
+                      return e("div", { key:d, onClick:()=>setScanMatchDigit(d), title:"Set as Match/Differ target", style:{
+                        aspectRatio:"1",borderRadius:"50%",border:`2px solid ${borderColor}`,cursor:"pointer",
                         display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
-                        background: hot ? "#0f172a" : C.card,
+                        background: hot ? "#2a0a0a" : cold ? "#0f172a" : isMatchTarget ? "#1e1147" : C.card,
                       } },
-                        e("span", { style:{fontSize:16,fontWeight:800,color:hot?C.cyan:C.text} }, d),
+                        e("span", { style:{fontSize:18,fontWeight:800,color:hot?"#f87171":cold?C.cyan:C.text} }, d),
                         e("span", { style:{fontSize:10,color:C.muted} }, total ? p+"%" : "—")
                       );
                     })
                   ),
 
-                  // Over/Under + Even/Odd
+                  // 2x2 panel grid: Over/Under, Match/Differ, Even/Odd, Rise/Fall
                   e("div", { style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:20} },
-                    e("div", { style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:20,display:"flex",flexDirection:"column",gap:12} },
-                      e("div", { style:{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:1,marginBottom:4} }, "OVER (>5) / UNDER (<5)"),
-                      barRow("OVER", overCount, C.green),
-                      barRow("UNDER", underCount, "#fb923c")
+
+                    // OVER / UNDER
+                    e("div", { style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:20} },
+                      panelHeader("OVER / UNDER", ouStreak),
+                      e("div", { style:{display:"flex",flexDirection:"column",gap:12,marginTop:10} },
+                        barRow("OVER", overCount, C.green),
+                        barRow("UNDER", underCount, "#fb923c")
+                      ),
+                      resultStrip(scanTicks, d => d===5?null:(d>5?"Over":"Under"), {Over:C.green, Under:"#fb923c"})
                     ),
-                    e("div", { style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:20,display:"flex",flexDirection:"column",gap:12} },
-                      e("div", { style:{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:1,marginBottom:4} }, "EVEN / ODD"),
-                      barRow("EVEN", evenCount, C.cyan),
-                      barRow("ODD", oddCount, "#f472b6")
+
+                    // MATCH / DIFFER
+                    e("div", { style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:20} },
+                      panelHeader("MATCH / DIFFER", mdStreak),
+                      e("p", { style:{color:"#475569",fontSize:11,margin:"0 0 8px"} }, "Target digit: ", e("strong",{style:{color:"#a78bfa"}}, scanMatchDigit), " — click a circle above to change"),
+                      e("div", { style:{display:"flex",flexDirection:"column",gap:12} },
+                        barRow("MATCH", matchCount, "#60a5fa"),
+                        barRow("DIFFER", differCount, "#a78bfa")
+                      ),
+                      resultStrip(scanTicks, d => d===scanMatchDigit?"Match":"Differ", {Match:"#60a5fa", Differ:"#a78bfa"})
+                    ),
+
+                    // EVEN / ODD
+                    e("div", { style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:20} },
+                      panelHeader("EVEN / ODD", eoStreak),
+                      e("div", { style:{display:"flex",flexDirection:"column",gap:12,marginTop:10} },
+                        barRow("EVEN", evenCount, C.cyan),
+                        barRow("ODD", oddCount, "#f472b6")
+                      ),
+                      resultStrip(scanTicks, d => d%2===0?"Even":"Odd", {Even:C.cyan, Odd:"#f472b6"})
+                    ),
+
+                    // RISE / FALL
+                    e("div", { style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:20} },
+                      panelHeader("RISE / FALL", rfStreak),
+                      e("div", { style:{display:"flex",flexDirection:"column",gap:12,marginTop:10} },
+                        barRow("RISE", riseCount, C.green, moveTotal),
+                        barRow("FALL", fallCount, "#f87171", moveTotal)
+                      ),
+                      resultStrip(scanPrices, (p,i,arr) => i===0?null:(p>arr[i-1]?"Rise":p<arr[i-1]?"Fall":null), {Rise:C.green, Fall:"#f87171"})
                     )
                   )
                 )
