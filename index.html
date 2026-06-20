@@ -209,6 +209,19 @@
     const [rcMultiplier, setRcMultiplier] = useState("2");
     const [rcMaxLosses, setRcMaxLosses]   = useState("6");
     const [rcPayoutPct, setRcPayoutPct]   = useState("85");
+
+    // Charts state
+    const [chartSym, setChartSym]       = useState(null);
+    const [chartInterval, setChartInterval] = useState(5); // seconds per candle
+    const [candles, setCandles]         = useState([]); // {time, open, high, low, close}
+    const chartSymRef = useRef(null);
+    const chartIntervalRef = useRef(5);
+    const currentCandleRef = useRef(null);
+    useEffect(() => { chartSymRef.current = chartSym; }, [chartSym]);
+    useEffect(() => { chartIntervalRef.current = chartInterval; }, [chartInterval]);
+    useEffect(() => {
+      if (chartSym) { setCandles([]); currentCandleRef.current = null; }
+    }, [chartInterval]);
     const [botRunning, setBotRunning]   = useState(false);
     const [botConfirming, setBotConfirming] = useState(false);
     const [botPL, setBotPL]             = useState(0);
@@ -249,12 +262,33 @@
           setSelCon(prev => prev || (list[0] ?? null));
         }
         if (msg.msg_type === "tick") {
-          const { symbol, quote } = msg.tick || {};
+          const { symbol, quote, epoch } = msg.tick || {};
           if (symbol && quote) {
             setTicks(prev => ({ ...prev, [symbol]: [...(prev[symbol]||[]), quote].slice(-60) }));
             if (symbol === scanSymRef.current) {
               const lastDigit = Number(String(quote).replace(".", "").slice(-1));
               setScanTicks(prev => [...prev, lastDigit].slice(-scanCountRef.current));
+            }
+            if (symbol === chartSymRef.current) {
+              const price = parseFloat(quote);
+              const t = epoch ? epoch * 1000 : Date.now();
+              const intervalMs = chartIntervalRef.current * 1000;
+              const bucketStart = Math.floor(t / intervalMs) * intervalMs;
+              const cur = currentCandleRef.current;
+              if (cur && cur.time === bucketStart) {
+                cur.high = Math.max(cur.high, price);
+                cur.low  = Math.min(cur.low, price);
+                cur.close = price;
+                setCandles(prev => {
+                  const copy = prev.slice();
+                  copy[copy.length - 1] = { ...cur };
+                  return copy;
+                });
+              } else {
+                const next = { time: bucketStart, open: price, high: price, low: price, close: price };
+                currentCandleRef.current = next;
+                setCandles(prev => [...prev, next].slice(-80));
+              }
             }
           }
         }
@@ -434,6 +468,13 @@
       setScanRunning(false);
     }
 
+    function startChart(sym) {
+      setChartSym(sym);
+      setCandles([]);
+      currentCandleRef.current = null;
+      if (pubStatus === "connected") pubWs.send({ ticks: sym, subscribe: 1 });
+    }
+
     function requestStartBot() {
       if (!botSym) { showToast("Select a market for the bot first", false); return; }
       setBotConfirming(true);
@@ -503,7 +544,7 @@
           e("span", { style:{fontSize:16,fontWeight:700} }, "TraderNova")
         ),
         e("div", { style:{display:"flex",flexDirection:"column",gap:2,padding:"20px 0",flex:1} },
-          [["market","◈","Markets"],["trade","⚡","Trade"],["scanner","◎","Scanner"],["bulk","▣","Bulk Trader"],["risk","⛨","Risk Calc"],["portfolio","▤","Portfolio"]].map(([key,icon,label]) =>
+          [["market","◈","Markets"],["trade","⚡","Trade"],["charts","▲","Charts"],["scanner","◎","Scanner"],["bulk","▣","Bulk Trader"],["risk","⛨","Risk Calc"],["portfolio","▤","Portfolio"]].map(([key,icon,label]) =>
             e("button", { key, style:navBtn(key), onClick:()=>setTab(key) },
               e("span", { style:{fontSize:18,width:24} }, icon),
               e("span", null, label)
@@ -624,6 +665,91 @@
             )
           )
         ),
+
+        tab === "charts" && (() => {
+          const W = 860, H = 380, padL = 50, padR = 10, padT = 10, padB = 24;
+          const plotW = W - padL - padR, plotH = H - padT - padB;
+
+          let svgContent = null;
+          if (candles.length >= 2) {
+            const highs = candles.map(c => c.high);
+            const lows  = candles.map(c => c.low);
+            const max = Math.max(...highs), min = Math.min(...lows);
+            const range = (max - min) || (max * 0.001) || 1;
+            const yFor = (price) => padT + plotH - ((price - min) / range) * plotH;
+            const candleW = plotW / candles.length;
+            const bodyW = Math.max(2, candleW * 0.6);
+
+            const gridLines = [0,0.25,0.5,0.75,1].map(f => {
+              const y = padT + plotH * f;
+              const price = max - range * f;
+              return e(React.Fragment, { key:f },
+                e("line", { x1:padL, y1:y, x2:W-padR, y2:y, stroke:"#0f172a", strokeWidth:1 }),
+                e("text", { x:4, y:y+4, fill:"#475569", fontSize:10, fontFamily:"monospace" }, price.toFixed(min < 10 ? 4 : 2))
+              );
+            });
+
+            const candleEls = candles.map((c, i) => {
+              const x = padL + i * candleW + candleW/2;
+              const up = c.close >= c.open;
+              const color = up ? "#22c55e" : "#f87171";
+              const yHigh = yFor(c.high), yLow = yFor(c.low);
+              const yOpen = yFor(c.open), yClose = yFor(c.close);
+              const bodyTop = Math.min(yOpen, yClose);
+              const bodyH = Math.max(1, Math.abs(yClose - yOpen));
+              return e("g", { key:c.time },
+                e("line", { x1:x, y1:yHigh, x2:x, y2:yLow, stroke:color, strokeWidth:1 }),
+                e("rect", { x:x-bodyW/2, y:bodyTop, width:bodyW, height:bodyH, fill:color })
+              );
+            });
+
+            svgContent = e("svg", { width:"100%", height:H, viewBox:`0 0 ${W} ${H}`, style:{display:"block"} },
+              gridLines, candleEls
+            );
+          }
+
+          const lastCandle = candles[candles.length - 1];
+
+          return e("div", { style:{padding:32,maxWidth:960} },
+            e("h2", { style:{fontSize:22,fontWeight:700,margin:"0 0 24px",letterSpacing:-0.5} }, "Charts"),
+
+            e("div", { style:{display:"flex",gap:12,alignItems:"flex-end",marginBottom:16,flexWrap:"wrap"} },
+              e("div", { style:{flex:1,minWidth:200} },
+                e("label", { style:{fontSize:11,fontWeight:600,color:C.muted,letterSpacing:1,textTransform:"uppercase",display:"block",marginBottom:6} }, "Market"),
+                e("select", { style:fieldStyle, value:chartSym||"", onChange:ev=>startChart(ev.target.value) },
+                  e("option", { value:"" }, "Select market..."),
+                  symbols.map(s => e("option", { key:s.symbol, value:s.symbol }, s.display_name))
+                )
+              ),
+              e("div", { style:{width:140} },
+                e("label", { style:{fontSize:11,fontWeight:600,color:C.muted,letterSpacing:1,textTransform:"uppercase",display:"block",marginBottom:6} }, "Candle Interval"),
+                e("select", { style:fieldStyle, value:chartInterval, onChange:ev=>setChartInterval(Number(ev.target.value)) },
+                  [[1,"1 second"],[5,"5 seconds"],[15,"15 seconds"],[60,"1 minute"]].map(([v,l]) => e("option", { key:v, value:v }, l))
+                )
+              )
+            ),
+
+            !chartSym
+              ? e("div", { style:{background:C.card,border:`1px dashed ${C.border}`,borderRadius:12,padding:48,textAlign:"center"} },
+                  e("div", { style:{fontSize:40} }, "▲"),
+                  e("p", { style:{color:"#475569",marginTop:12,fontSize:14} }, "Select a market to start building a live candlestick chart from tick data.")
+                )
+              : e(React.Fragment, null,
+                  lastCandle && e("div", { style:{display:"flex",gap:20,marginBottom:12,fontSize:12} },
+                    e("span", { style:{color:C.muted} }, "O ", e("strong",{style:{color:C.text,fontFamily:"monospace"}}, lastCandle.open.toFixed(4))),
+                    e("span", { style:{color:C.muted} }, "H ", e("strong",{style:{color:C.green,fontFamily:"monospace"}}, lastCandle.high.toFixed(4))),
+                    e("span", { style:{color:C.muted} }, "L ", e("strong",{style:{color:"#f87171",fontFamily:"monospace"}}, lastCandle.low.toFixed(4))),
+                    e("span", { style:{color:C.muted} }, "C ", e("strong",{style:{color:C.text,fontFamily:"monospace"}}, lastCandle.close.toFixed(4)))
+                  ),
+                  e("div", { style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:16} },
+                    candles.length < 2
+                      ? e("div", { style:{padding:"60px 0",textAlign:"center",color:"#475569",fontSize:13} }, "Collecting ticks — chart will appear in a moment...")
+                      : svgContent
+                  ),
+                  e("p", { style:{color:"#475569",fontSize:11,marginTop:10} }, candles.length+" candles • built live from streaming ticks")
+                )
+          );
+        })(),
 
         tab === "scanner" && (() => {
           const counts = Array(10).fill(0);
