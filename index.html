@@ -732,6 +732,10 @@
               )
             ),
 
+            chartInterval === 1 && e("p", { style:{color:"#fb923c",fontSize:12,marginBottom:16} },
+              "ℹ️ Most assets tick about once per second, so 1-second candles often show as flat bars (open = close). Try 5s or 15s for visible wicks and bodies."
+            ),
+
             !chartSym
               ? e("div", { style:{background:C.card,border:`1px dashed ${C.border}`,borderRadius:12,padding:48,textAlign:"center"} },
                   e("div", { style:{fontSize:40} }, "▲"),
