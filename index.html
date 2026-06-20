@@ -890,25 +890,32 @@
                     e("span", { style:{color:C.sub,fontSize:13} }, "Sampling: ", e("strong",{style:{color:C.text}}, total+" / "+scanCount), " ticks", scanRunning ? "  •  live" : "  •  stopped"),
                   ),
 
-                  // Digit circles — single row, bigger
-                  e("div", { style:{display:"grid",gridTemplateColumns:"repeat(10,1fr)",gap:8,marginBottom:28} },
-                    counts.map((c,d) => {
-                      const p = pct(c);
-                      const maxC = Math.max(...counts);
-                      const minC = total ? Math.min(...counts.filter((_,i)=>true)) : 0;
-                      const hot = total > 0 && c === maxC;
-                      const cold = total > 0 && c === Math.min(...counts);
-                      const isMatchTarget = d === scanMatchDigit;
-                      const borderColor = hot ? "#f87171" : cold ? C.cyan : (isMatchTarget ? "#a78bfa" : C.border);
-                      return e("div", { key:d, onClick:()=>setScanMatchDigit(d), title:"Set as Match/Differ target", style:{
-                        aspectRatio:"1",borderRadius:"50%",border:`2px solid ${borderColor}`,cursor:"pointer",
-                        display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
-                        background: hot ? "#2a0a0a" : cold ? "#0f172a" : isMatchTarget ? "#1e1147" : C.card,
-                      } },
-                        e("span", { style:{fontSize:18,fontWeight:800,color:hot?"#f87171":cold?C.cyan:C.text} }, d),
-                        e("span", { style:{fontSize:10,color:C.muted} }, total ? p+"%" : "—")
-                      );
-                    })
+                  // Digit circles — single row, bigger, with live "last digit" pointer
+                  e("div", { style:{position:"relative",marginBottom:28} },
+                    e("div", { style:{display:"grid",gridTemplateColumns:"repeat(10,1fr)",gap:8} },
+                      counts.map((c,d) => {
+                        const p = pct(c);
+                        const maxC = Math.max(...counts);
+                        const hot = total > 0 && c === maxC;
+                        const cold = total > 0 && c === Math.min(...counts);
+                        const isMatchTarget = d === scanMatchDigit;
+                        const borderColor = hot ? "#f87171" : cold ? C.cyan : (isMatchTarget ? "#a78bfa" : C.border);
+                        return e("div", { key:d, onClick:()=>setScanMatchDigit(d), title:"Set as Match/Differ target", style:{
+                          aspectRatio:"1",borderRadius:"50%",border:`2px solid ${borderColor}`,cursor:"pointer",
+                          display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
+                          background: hot ? "#2a0a0a" : cold ? "#0f172a" : isMatchTarget ? "#1e1147" : C.card,
+                        } },
+                          e("span", { style:{fontSize:18,fontWeight:800,color:hot?"#f87171":cold?C.cyan:C.text} }, d),
+                          e("span", { style:{fontSize:10,color:C.muted} }, total ? p+"%" : "—")
+                        );
+                      })
+                    ),
+                    total > 0 && e("div", { style:{
+                      position:"absolute", top:"100%", left:`${(scanTicks[scanTicks.length-1] / 10) * 100 + 5}%`,
+                      transform:"translateX(-50%)", marginTop:4, transition:"left 0.25s ease",
+                      width:0, height:0, borderLeft:"6px solid transparent", borderRight:"6px solid transparent",
+                      borderBottom:`8px solid ${C.cyan}`,
+                    } })
                   ),
 
                   // 2x2 panel grid: Over/Under, Match/Differ, Even/Odd, Rise/Fall
