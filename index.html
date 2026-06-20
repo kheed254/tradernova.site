@@ -202,6 +202,7 @@
     const [botMultiplier, setBotMultiplier] = useState("2");
     const [botTakeProfit, setBotTakeProfit] = useState("10");
     const [botStopLoss, setBotStopLoss] = useState("10");
+    const [botMaxStake, setBotMaxStake] = useState("20");
     const [botRunning, setBotRunning]   = useState(false);
     const [botConfirming, setBotConfirming] = useState(false);
     const [botPL, setBotPL]             = useState(0);
@@ -216,9 +217,10 @@
         sym: botSym, type: botType, prediction: botPrediction, barrier: botBarrier,
         baseStake: parseFloat(botBaseStake) || 1, multiplier: parseFloat(botMultiplier) || 2,
         takeProfit: parseFloat(botTakeProfit) || 10, stopLoss: parseFloat(botStopLoss) || 10,
+        maxStake: parseFloat(botMaxStake) || 20,
         pl: botPL, stake: botStake,
       };
-    }, [botSym, botType, botPrediction, botBarrier, botBaseStake, botMultiplier, botTakeProfit, botStopLoss, botPL, botStake]);
+    }, [botSym, botType, botPrediction, botBarrier, botBaseStake, botMultiplier, botTakeProfit, botStopLoss, botMaxStake, botPL, botStake]);
 
     const pubWs = useWS(PUBLIC_WS_URL, {
       onOpen: () => { setPubStatus("connected"); pubWs.send({ active_symbols:"brief", product_type:"basic" }); },
@@ -292,7 +294,8 @@
             setBotTrades(prev => [{ time: Date.now(), stake: st.stake, won, profit, contractId: c.contract_id }, ...prev].slice(0, 50));
             setAuthBalanceRefresh();
             // Martingale: increase stake on loss, reset on win
-            const nextStake = won ? st.baseStake : +(st.stake * st.multiplier).toFixed(2);
+            const rawNextStake = won ? st.baseStake : +(st.stake * st.multiplier).toFixed(2);
+            const nextStake = Math.min(rawNextStake, st.maxStake);
             setBotStake(nextStake);
             // Check stop conditions
             if (newPL >= st.takeProfit) {
@@ -300,6 +303,9 @@
               setBotRunning(false); setBotStatus("idle");
             } else if (newPL <= -st.stopLoss) {
               showToast(`🛑 Stop-loss hit. ${newPL.toFixed(2)}`, false);
+              setBotRunning(false); setBotStatus("idle");
+            } else if (!won && rawNextStake > st.maxStake) {
+              showToast(`⚠️ Max stake ($${st.maxStake.toFixed(2)}) reached — bot stopped for safety.`, false);
               setBotRunning(false); setBotStatus("idle");
             } else if (botRunningRef.current) {
               setBotStatus("idle"); // ready for next round; effect below will trigger it
@@ -743,6 +749,10 @@
                       e("label", { style:{fontSize:11,fontWeight:600,color:"#f87171",letterSpacing:1,textTransform:"uppercase",display:"block",marginBottom:6} }, "Stop Loss ($)"),
                       e("input", { style:fieldStyle, type:"number", min:0.5, step:0.5, value:botStopLoss, onChange:ev=>setBotStopLoss(ev.target.value) })
                     )
+                  ),
+                  e("div", null,
+                    e("label", { style:{fontSize:11,fontWeight:600,color:"#fb923c",letterSpacing:1,textTransform:"uppercase",display:"block",marginBottom:6} }, "Max Stake Cap ($) — safety limit"),
+                    e("input", { style:fieldStyle, type:"number", min:0.35, step:0.5, value:botMaxStake, onChange:ev=>setBotMaxStake(ev.target.value) })
                   )
                 ),
 
@@ -770,6 +780,27 @@
                     ? e("button", { style:{background:C.cyan,color:"#060d1a",border:"none",borderRadius:8,padding:14,fontSize:15,fontWeight:800,cursor:"pointer"}, onClick:requestStartBot }, "▶ Start Bot")
                     : e("button", { style:{background:"#f87171",color:"#1f0a0a",border:"none",borderRadius:8,padding:14,fontSize:15,fontWeight:800,cursor:"pointer"}, onClick:stopBot }, "■ Stop Bot"),
 
+                  botTrades.length > 0 && (() => {
+                    const wins = botTrades.filter(t => t.won).length;
+                    const losses = botTrades.length - wins;
+                    const winRate = ((wins / botTrades.length) * 100).toFixed(1);
+                    const avgStake = (botTrades.reduce((sum,t) => sum + t.stake, 0) / botTrades.length).toFixed(2);
+                    return e("div", { style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px",display:"flex",justifyContent:"space-between"} },
+                      e("div", null,
+                        e("div", { style:{fontSize:10,color:C.muted,letterSpacing:1,marginBottom:4} }, "WIN RATE"),
+                        e("div", { style:{fontSize:18,fontFamily:"monospace",fontWeight:700,color: winRate>=50?C.green:"#f87171"} }, winRate+"%")
+                      ),
+                      e("div", null,
+                        e("div", { style:{fontSize:10,color:C.muted,letterSpacing:1,marginBottom:4} }, "WON / LOST"),
+                        e("div", { style:{fontSize:18,fontFamily:"monospace",fontWeight:700} }, e("span",{style:{color:C.green}},wins), " / ", e("span",{style:{color:"#f87171"}},losses))
+                      ),
+                      e("div", null,
+                        e("div", { style:{fontSize:10,color:C.muted,letterSpacing:1,marginBottom:4} }, "AVG STAKE"),
+                        e("div", { style:{fontSize:18,fontFamily:"monospace",fontWeight:700,color:C.text} }, "$"+avgStake)
+                      )
+                    );
+                  })(),
+
                   e("div", { style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px",maxHeight:280,overflow:"auto"} },
                     e("div", { style:{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:1,marginBottom:10} }, "TRADE LOG"),
                     botTrades.length === 0
@@ -788,7 +819,7 @@
             e("div", { style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:28,maxWidth:380} },
               e("h3", { style:{fontSize:17,fontWeight:700,marginBottom:12} }, "Confirm Bot Start"),
               e("p", { style:{color:C.sub,fontSize:13,lineHeight:1.6,marginBottom:18} },
-                "This will place real trades on your demo account automatically. Base stake $"+botBaseStake+", Martingale ×"+botMultiplier+", stopping at +$"+botTakeProfit+" profit or -$"+botStopLoss+" loss."
+                "This will place real trades on your demo account automatically. Base stake $"+botBaseStake+", Martingale ×"+botMultiplier+", max stake cap $"+botMaxStake+", stopping at +$"+botTakeProfit+" profit or -$"+botStopLoss+" loss."
               ),
               e("div", { style:{display:"flex",gap:10} },
                 e("button", { style:{flex:1,padding:"10px",borderRadius:8,border:`1px solid ${C.border}`,background:"transparent",color:C.sub,fontSize:13,fontWeight:600,cursor:"pointer"}, onClick:()=>setBotConfirming(false) }, "Cancel"),
