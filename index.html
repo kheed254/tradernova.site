@@ -258,6 +258,7 @@
     const authWs = useWS(null, {
       onOpen: () => { authWs.send({ balance:1, subscribe:1 }); authWs.send({ portfolio:1 }); },
       onMessage: (msg) => {
+        console.log("AUTH WS msg:", msg.msg_type, "req_id:", msg.req_id, msg);
         if (msg.msg_type === "balance")   { console.log("balance msg:", msg); setBalance(msg.balance); }
         if (msg.msg_type === "portfolio") { console.log("portfolio msg:", msg); setPortfolio(msg.portfolio?.contracts || []); }
 
@@ -355,7 +356,19 @@
       };
       if (st.type === "overunder") req.barrier = String(st.barrier);
       setBotStatus("waiting_proposal");
+      console.log("BOT sending proposal request:", req);
       authWs.send(req);
+      const timeoutId = setTimeout(() => {
+        setBotStatus(curr => {
+          if (curr === "waiting_proposal") {
+            showToast("Bot: no response from server after 10s — stopping for safety", false);
+            setBotRunning(false);
+            return "idle";
+          }
+          return curr;
+        });
+      }, 10000);
+      return () => clearTimeout(timeoutId);
     }, [botRunning, botStatus]);
 
     // Connect to public market data on load
