@@ -678,8 +678,9 @@
             const range = (max - min) || (max * 0.001) || 1;
             const yFor = (price) => padT + plotH - ((price - min) / range) * plotH;
             const maxVisible = 80;
-            const candleW = plotW / maxVisible;
-            const bodyW = Math.max(2, candleW * 0.6);
+            const visibleCount = Math.max(20, Math.min(maxVisible, candles.length));
+            const candleW = plotW / visibleCount;
+            const bodyW = Math.max(3, candleW * 0.7);
 
             const gridLines = [0,0.25,0.5,0.75,1].map(f => {
               const y = padT + plotH * f;
@@ -698,7 +699,7 @@
               const yHigh = yFor(c.high), yLow = yFor(c.low);
               const yOpen = yFor(c.open), yClose = yFor(c.close);
               const bodyTop = Math.min(yOpen, yClose);
-              const bodyH = Math.max(2, Math.abs(yClose - yOpen));
+              const bodyH = Math.max(3, Math.abs(yClose - yOpen));
               return e("g", { key:c.time },
                 e("line", { x1:x, y1:yHigh, x2:x, y2:yLow, stroke:color, strokeWidth:1 }),
                 e("rect", { x:x-bodyW/2, y:bodyTop, width:bodyW, height:bodyH, fill:color, rx:1 })
