@@ -944,6 +944,7 @@
                     // RISE / FALL
                     e("div", { style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:20} },
                       panelHeader("RISE / FALL", rfStreak),
+                      (riseCount === 0 || fallCount === 0) && total > 20 && e("p", { style:{color:"#fb923c",fontSize:10,margin:"2px 0 0"} }, "Boom/Crash-style indices trend steadily one way between rare spikes — this skew is expected."),
                       e("div", { style:{display:"flex",flexDirection:"column",gap:12,marginTop:10} },
                         barRow("RISE", riseCount, C.green, moveTotal),
                         barRow("FALL", fallCount, "#f87171", moveTotal)
