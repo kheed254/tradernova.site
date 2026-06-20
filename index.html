@@ -475,6 +475,25 @@
       if (pubStatus === "connected") pubWs.send({ ticks: sym, subscribe: 1 });
     }
 
+    const ROBOT_PRESETS = [
+      { id:"ou18", name:"Over 1 / Under 8", desc:"Trades whichever edge setup appears first between Over 1 and Under 8.", tags:["Over 1","Under 8"], type:"overunder", prediction:"over", barrier:1, color:"#22c55e" },
+      { id:"ou27", name:"Over 2 / Under 7", desc:"Combines the Over 2 and Under 7 edge triggers into one preset.", tags:["Over 2","Under 7"], type:"overunder", prediction:"over", barrier:2, color:"#22c55e" },
+      { id:"ou36", name:"Over 3 / Under 6", desc:"Combines the Over 3 and Under 6 edge triggers into one preset.", tags:["Over 3","Under 6"], type:"overunder", prediction:"over", barrier:3, color:"#22c55e" },
+      { id:"ou45", name:"Over 4 / Under 5", desc:"Combines the Over 4 and Under 5 edge triggers into one preset.", tags:["Over 4","Under 5"], type:"overunder", prediction:"over", barrier:4, color:"#22c55e" },
+      { id:"eo3", name:"Even/Odd 3", desc:"If last 3 digits sum is even, trade ODD. If odd, trade EVEN.", tags:["Even 3","Odd 3"], type:"evenodd", prediction:"odd", color:"#60a5fa" },
+      { id:"eo4", name:"Even/Odd 4", desc:"If last 4 digits sum is even, trade ODD. If odd, trade EVEN.", tags:["Even 4","Odd 4"], type:"evenodd", prediction:"odd", color:"#60a5fa" },
+      { id:"eo5", name:"Even/Odd 5", desc:"If last 5 digits sum is even, trade ODD. If odd, trade EVEN.", tags:["Even 5","Odd 5"], type:"evenodd", prediction:"odd", color:"#60a5fa" },
+      { id:"eo6", name:"Even/Odd 6", desc:"If last 6 digits sum is even, trade ODD. If odd, trade EVEN.", tags:["Even 6","Odd 6"], type:"evenodd", prediction:"odd", color:"#60a5fa" },
+    ];
+
+    function applyPreset(preset) {
+      setBotType(preset.type);
+      setBotPrediction(preset.prediction);
+      if (preset.barrier != null) setBotBarrier(preset.barrier);
+      setTab("bulk");
+      showToast(`"${preset.name}" loaded into Bulk Trader — pick a market and review your stakes before starting.`, true);
+    }
+
     function requestStartBot() {
       if (!botSym) { showToast("Select a market for the bot first", false); return; }
       setBotConfirming(true);
@@ -544,7 +563,7 @@
           e("span", { style:{fontSize:16,fontWeight:700} }, "TraderNova")
         ),
         e("div", { style:{display:"flex",flexDirection:"column",gap:2,padding:"20px 0",flex:1} },
-          [["market","◈","Markets"],["trade","⚡","Trade"],["charts","▲","Charts"],["scanner","◎","Scanner"],["bulk","▣","Bulk Trader"],["risk","⛨","Risk Calc"],["portfolio","▤","Portfolio"]].map(([key,icon,label]) =>
+          [["market","◈","Markets"],["trade","⚡","Trade"],["charts","▲","Charts"],["scanner","◎","Scanner"],["robots","✦","AI Robots"],["bulk","▣","Bulk Trader"],["risk","⛨","Risk Calc"],["portfolio","▤","Portfolio"]].map(([key,icon,label]) =>
             e("button", { key, style:navBtn(key), onClick:()=>setTab(key) },
               e("span", { style:{fontSize:18,width:24} }, icon),
               e("span", null, label)
@@ -839,6 +858,31 @@
                 )
           );
         })(),
+
+        tab === "robots" && e("div", { style:{padding:32,maxWidth:1100} },
+          e("h2", { style:{fontSize:22,fontWeight:700,margin:"0 0 8px",letterSpacing:-0.5} }, "AI Robots"),
+          e("p", { style:{color:C.muted,fontSize:13,marginBottom:24} }, "One-click presets that configure Bulk Trader with proven Over/Under and Even/Odd setups. Review stakes before starting."),
+
+          e("div", { style:{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(250px,1fr))",gap:16} },
+            ROBOT_PRESETS.map(p => e("div", { key:p.id, style:{
+              background:C.card, border:`1px solid ${C.border}`, borderTop:`3px solid ${p.color}`,
+              borderRadius:10, padding:18, display:"flex", flexDirection:"column", gap:10
+            } },
+              e("div", { style:{fontSize:15,fontWeight:700,color:C.text} }, p.name),
+              e("p", { style:{color:C.muted,fontSize:12,lineHeight:1.5,minHeight:36} }, p.desc),
+              e("div", { style:{display:"flex",gap:6,flexWrap:"wrap"} },
+                p.tags.map(t => e("span", { key:t, style:{background:"#0a1628",border:`1px solid ${C.border}`,borderRadius:6,padding:"3px 8px",fontSize:11,color:C.sub} }, t))
+              ),
+              e("div", { style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:8,paddingTop:12,borderTop:`1px solid #0f172a`} },
+                e("div", null,
+                  e("div", { style:{fontSize:10,color:"#475569",letterSpacing:0.5} }, "TRADE SETUP"),
+                  e("div", { style:{fontSize:12,color:C.sub,fontWeight:600} }, p.type==="overunder" ? `Over ${p.barrier}` : "Trade odd / Trade even")
+                ),
+                e("button", { style:{background: p.color==="#22c55e"?"#052e16":"#0c1f3d", border:`1px solid ${p.color}`, color:p.color, borderRadius:7, padding:"7px 16px", fontSize:12, fontWeight:700, cursor:"pointer"}, onClick:()=>applyPreset(p) }, "Open bot")
+              )
+            ))
+          )
+        ),
 
         tab === "bulk" && e("div", { style:{padding:32,maxWidth:1000} },
           e("h2", { style:{fontSize:22,fontWeight:700,margin:"0 0 8px",letterSpacing:-0.5} }, "Bulk Trader"),
