@@ -183,6 +183,16 @@
     const propIdRef = useRef(null);
     const pendingBuyRef = useRef(false);
 
+    // Scanner state
+    const [scanSym, setScanSym]       = useState(null);
+    const [scanTicks, setScanTicks]   = useState([]); // array of last digits
+    const [scanCount, setScanCount]   = useState(1000);
+    const [scanRunning, setScanRunning] = useState(false);
+    const scanSymRef = useRef(null);
+    const scanCountRef = useRef(1000);
+    useEffect(() => { scanSymRef.current = scanRunning ? scanSym : null; }, [scanSym, scanRunning]);
+    useEffect(() => { scanCountRef.current = scanCount; }, [scanCount]);
+
     const pubWs = useWS(PUBLIC_WS_URL, {
       onOpen: () => { setPubStatus("connected"); pubWs.send({ active_symbols:"brief", product_type:"basic" }); },
       onClose: () => {
@@ -205,7 +215,13 @@
         }
         if (msg.msg_type === "tick") {
           const { symbol, quote } = msg.tick || {};
-          if (symbol && quote) setTicks(prev => ({ ...prev, [symbol]: [...(prev[symbol]||[]), quote].slice(-60) }));
+          if (symbol && quote) {
+            setTicks(prev => ({ ...prev, [symbol]: [...(prev[symbol]||[]), quote].slice(-60) }));
+            if (symbol === scanSymRef.current) {
+              const lastDigit = Number(String(quote).replace(".", "").slice(-1));
+              setScanTicks(prev => [...prev, lastDigit].slice(-scanCountRef.current));
+            }
+          }
         }
       }
     });
@@ -282,6 +298,16 @@
 
     function showToast(msg, ok=true) { setToast({msg,ok}); setTimeout(()=>setToast(null),4000); }
 
+    function startScan(sym) {
+      setScanSym(sym);
+      setScanTicks([]);
+      setScanRunning(true);
+      if (pubStatus === "connected") pubWs.send({ ticks: sym, subscribe: 1 });
+    }
+    function stopScan() {
+      setScanRunning(false);
+    }
+
     function getQuote() {
       if (!selSym) { showToast("Please select an asset first", false); return; }
       if (!selCon) { showToast("No contract types loaded for this asset yet — try reselecting it, or check market connection", false); return; }
@@ -333,7 +359,7 @@
           e("span", { style:{fontSize:16,fontWeight:700} }, "TraderNova")
         ),
         e("div", { style:{display:"flex",flexDirection:"column",gap:2,padding:"20px 0",flex:1} },
-          [["market","◈","Markets"],["trade","⚡","Trade"],["portfolio","▤","Portfolio"]].map(([key,icon,label]) =>
+          [["market","◈","Markets"],["trade","⚡","Trade"],["scanner","◎","Scanner"],["portfolio","▤","Portfolio"]].map(([key,icon,label]) =>
             e("button", { key, style:navBtn(key), onClick:()=>setTab(key) },
               e("span", { style:{fontSize:18,width:24} }, icon),
               e("span", null, label)
@@ -454,6 +480,88 @@
             )
           )
         ),
+
+        tab === "scanner" && (() => {
+          const counts = Array(10).fill(0);
+          scanTicks.forEach(d => { if (d >= 0 && d <= 9) counts[d]++; });
+          const total = scanTicks.length;
+          const pct = (n) => total ? ((n/total)*100).toFixed(2) : "0.00";
+          const overCount  = scanTicks.filter(d => d > 5).length;
+          const underCount = scanTicks.filter(d => d < 5).length;
+          const evenCount  = scanTicks.filter(d => d % 2 === 0).length;
+          const oddCount   = scanTicks.filter(d => d % 2 !== 0).length;
+          const barRow = (label, count, color) => e("div", { key:label, style:{display:"flex",alignItems:"center",gap:12} },
+            e("span", { style:{width:60,color,fontSize:12,fontWeight:700} }, label),
+            e("div", { style:{flex:1,height:8,background:"#0a1628",borderRadius:4,overflow:"hidden"} },
+              e("div", { style:{width:pct(count)+"%",height:"100%",background:color,transition:"width 0.3s"} })
+            ),
+            e("span", { style:{width:60,textAlign:"right",fontFamily:"monospace",fontSize:13,color} }, pct(count)+"%")
+          );
+
+          return e("div", { style:{padding:32,maxWidth:900} },
+            e("h2", { style:{fontSize:22,fontWeight:700,margin:"0 0 24px",letterSpacing:-0.5} }, "Signal Scanner"),
+
+            e("div", { style:{display:"flex",gap:12,alignItems:"flex-end",marginBottom:24,flexWrap:"wrap"} },
+              e("div", { style:{flex:1,minWidth:200} },
+                e("label", { style:{fontSize:11,fontWeight:600,color:C.muted,letterSpacing:1,textTransform:"uppercase",display:"block",marginBottom:6} }, "Market"),
+                e("select", { style:fieldStyle, value:scanSym||"", onChange:ev=>startScan(ev.target.value) },
+                  e("option", { value:"" }, "Select market..."),
+                  symbols.map(s => e("option", { key:s.symbol, value:s.symbol }, s.display_name))
+                )
+              ),
+              e("div", { style:{width:120} },
+                e("label", { style:{fontSize:11,fontWeight:600,color:C.muted,letterSpacing:1,textTransform:"uppercase",display:"block",marginBottom:6} }, "Sample Size"),
+                e("select", { style:fieldStyle, value:scanCount, onChange:ev=>setScanCount(Number(ev.target.value)) },
+                  [100,250,500,1000].map(n => e("option", { key:n, value:n }, n+" ticks"))
+                )
+              ),
+              scanRunning
+                ? e("button", { style:{background:"#f87171",color:"#1f0a0a",border:"none",borderRadius:8,padding:"10px 18px",fontSize:13,fontWeight:700,cursor:"pointer"}, onClick:stopScan }, "Stop")
+                : e("button", { style:{background:C.cyan,color:"#060d1a",border:"none",borderRadius:8,padding:"10px 18px",fontSize:13,fontWeight:700,cursor:"pointer",opacity:scanSym?1:0.4}, disabled:!scanSym, onClick:()=>startScan(scanSym) }, "Start")
+            ),
+
+            !scanSym
+              ? e("div", { style:{background:C.card,border:`1px dashed ${C.border}`,borderRadius:12,padding:48,textAlign:"center"} },
+                  e("div", { style:{fontSize:40} }, "◎"),
+                  e("p", { style:{color:"#475569",marginTop:12,fontSize:14} }, "Select a market to start scanning live digit patterns.")
+                )
+              : e(React.Fragment, null,
+                  e("div", { style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16} },
+                    e("span", { style:{color:C.sub,fontSize:13} }, "Sampling: ", e("strong",{style:{color:C.text}}, total+" / "+scanCount), " ticks", scanRunning ? "  •  live" : "  •  stopped"),
+                  ),
+
+                  // Digit circles
+                  e("div", { style:{display:"grid",gridTemplateColumns:"repeat(10,1fr)",gap:8,marginBottom:28} },
+                    counts.map((c,d) => {
+                      const p = pct(c);
+                      const hot = total > 0 && c === Math.max(...counts);
+                      return e("div", { key:d, style:{
+                        aspectRatio:"1",borderRadius:"50%",border:`2px solid ${hot?C.cyan:C.border}`,
+                        display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
+                        background: hot ? "#0f172a" : C.card,
+                      } },
+                        e("span", { style:{fontSize:16,fontWeight:800,color:hot?C.cyan:C.text} }, d),
+                        e("span", { style:{fontSize:10,color:C.muted} }, total ? p+"%" : "—")
+                      );
+                    })
+                  ),
+
+                  // Over/Under + Even/Odd
+                  e("div", { style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:20} },
+                    e("div", { style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:20,display:"flex",flexDirection:"column",gap:12} },
+                      e("div", { style:{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:1,marginBottom:4} }, "OVER (>5) / UNDER (<5)"),
+                      barRow("OVER", overCount, C.green),
+                      barRow("UNDER", underCount, "#fb923c")
+                    ),
+                    e("div", { style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:20,display:"flex",flexDirection:"column",gap:12} },
+                      e("div", { style:{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:1,marginBottom:4} }, "EVEN / ODD"),
+                      barRow("EVEN", evenCount, C.cyan),
+                      barRow("ODD", oddCount, "#f472b6")
+                    )
+                  )
+                )
+          );
+        })(),
 
         tab === "portfolio" && e("div", { style:{padding:32,maxWidth:900} },
           e("h2", { style:{fontSize:22,fontWeight:700,margin:"0 0 24px",letterSpacing:-0.5} }, "Portfolio"),
