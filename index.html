@@ -268,11 +268,15 @@
           setSelCon(prev => prev || (list[0] ?? null));
         }
         if (msg.msg_type === "tick") {
-          const { symbol, quote, epoch } = msg.tick || {};
+          const { symbol, quote, epoch, pip_size } = msg.tick || {};
           if (symbol && quote) {
             setTicks(prev => ({ ...prev, [symbol]: [...(prev[symbol]||[]), quote].slice(-60) }));
             if (symbol === scanSymRef.current) {
-              const lastDigit = Number(String(quote).replace(".", "").slice(-1));
+              // pip_size tells us the true decimal precision — JS numbers silently drop trailing zeros,
+              // so we must re-pad using pip_size before reading the last digit, or it's misread.
+              const decimals = pip_size != null ? pip_size : (String(quote).split(".")[1]?.length || 0);
+              const fixedQuote = Number(quote).toFixed(decimals);
+              const lastDigit = Number(fixedQuote.slice(-1));
               setScanTicks(prev => [...prev, lastDigit].slice(-scanCountRef.current));
               setScanPrices(prev => [...prev, parseFloat(quote)].slice(-scanCountRef.current));
             }
