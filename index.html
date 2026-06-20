@@ -193,6 +193,33 @@
     useEffect(() => { scanSymRef.current = scanRunning ? scanSym : null; }, [scanSym, scanRunning]);
     useEffect(() => { scanCountRef.current = scanCount; }, [scanCount]);
 
+    // Bulk Trader (bot) state
+    const [botSym, setBotSym]           = useState(null);
+    const [botType, setBotType]         = useState("evenodd"); // evenodd | overunder
+    const [botPrediction, setBotPrediction] = useState("even"); // even|odd | over|under
+    const [botBarrier, setBotBarrier]   = useState(5);
+    const [botBaseStake, setBotBaseStake] = useState("1");
+    const [botMultiplier, setBotMultiplier] = useState("2");
+    const [botTakeProfit, setBotTakeProfit] = useState("10");
+    const [botStopLoss, setBotStopLoss] = useState("10");
+    const [botRunning, setBotRunning]   = useState(false);
+    const [botConfirming, setBotConfirming] = useState(false);
+    const [botPL, setBotPL]             = useState(0);
+    const [botStake, setBotStake]       = useState(1);
+    const [botTrades, setBotTrades]     = useState([]); // {time, stake, result, profit, contractId}
+    const [botStatus, setBotStatus]     = useState("idle"); // idle | waiting_proposal | in_trade
+    const botRunningRef = useRef(false);
+    const botStateRef   = useRef({}); // holds latest bot config + running totals for closures
+    useEffect(() => { botRunningRef.current = botRunning; }, [botRunning]);
+    useEffect(() => {
+      botStateRef.current = {
+        sym: botSym, type: botType, prediction: botPrediction, barrier: botBarrier,
+        baseStake: parseFloat(botBaseStake) || 1, multiplier: parseFloat(botMultiplier) || 2,
+        takeProfit: parseFloat(botTakeProfit) || 10, stopLoss: parseFloat(botStopLoss) || 10,
+        pl: botPL, stake: botStake,
+      };
+    }, [botSym, botType, botPrediction, botBarrier, botBaseStake, botMultiplier, botTakeProfit, botStopLoss, botPL, botStake]);
+
     const pubWs = useWS(PUBLIC_WS_URL, {
       onOpen: () => { setPubStatus("connected"); pubWs.send({ active_symbols:"brief", product_type:"basic" }); },
       onClose: () => {
@@ -231,7 +258,60 @@
       onMessage: (msg) => {
         if (msg.msg_type === "balance")   { console.log("balance msg:", msg); setBalance(msg.balance); }
         if (msg.msg_type === "portfolio") { console.log("portfolio msg:", msg); setPortfolio(msg.portfolio?.contracts || []); }
-        if (msg.msg_type === "proposal")  {
+
+        // ── Bot-originated proposal (req_id 9001) ──
+        if (msg.msg_type === "proposal" && msg.req_id === 9001) {
+          if (msg.error) {
+            showToast("Bot quote failed: " + msg.error.message, false);
+            setBotStatus("idle");
+          } else {
+            authWs.send({ buy: msg.proposal.id, price: parseFloat(msg.proposal.ask_price), req_id: 9002 });
+          }
+          return;
+        }
+        // ── Bot-originated buy (req_id 9002) ──
+        if (msg.msg_type === "buy" && msg.req_id === 9002) {
+          if (msg.error) {
+            showToast("Bot trade failed: " + msg.error.message, false);
+            setBotStatus("idle");
+          } else {
+            setBotStatus("in_trade");
+            authWs.send({ proposal_open_contract: 1, contract_id: msg.buy.contract_id, subscribe: 1, req_id: 9003 });
+          }
+          return;
+        }
+        // ── Bot contract settlement tracking (req_id 9003) ──
+        if (msg.msg_type === "proposal_open_contract" && msg.req_id === 9003) {
+          const c = msg.proposal_open_contract;
+          if (c && c.is_sold) {
+            const profit = parseFloat(c.profit);
+            const won = profit > 0;
+            const st = botStateRef.current;
+            const newPL = st.pl + profit;
+            setBotPL(newPL);
+            setBotTrades(prev => [{ time: Date.now(), stake: st.stake, won, profit, contractId: c.contract_id }, ...prev].slice(0, 50));
+            setAuthBalanceRefresh();
+            // Martingale: increase stake on loss, reset on win
+            const nextStake = won ? st.baseStake : +(st.stake * st.multiplier).toFixed(2);
+            setBotStake(nextStake);
+            // Check stop conditions
+            if (newPL >= st.takeProfit) {
+              showToast(`🎯 Take-profit hit! +$${newPL.toFixed(2)}`, true);
+              setBotRunning(false); setBotStatus("idle");
+            } else if (newPL <= -st.stopLoss) {
+              showToast(`🛑 Stop-loss hit. ${newPL.toFixed(2)}`, false);
+              setBotRunning(false); setBotStatus("idle");
+            } else if (botRunningRef.current) {
+              setBotStatus("idle"); // ready for next round; effect below will trigger it
+            } else {
+              setBotStatus("idle");
+            }
+          }
+          return;
+        }
+
+        // ── Manual (Trade tab) flows ──
+        if (msg.msg_type === "proposal" && msg.req_id !== 9001)  {
           console.log("proposal msg:", msg);
           if (msg.error) {
             showToast("Quote failed: " + msg.error.message, false);
@@ -246,10 +326,31 @@
             }
           }
         }
-        if (msg.msg_type === "buy")       { setBuyResult(msg.buy); setBuyLoading(false); showToast(msg.error ? "Buy failed: "+msg.error.message : "✓ Contract #"+msg.buy?.contract_id+" purchased", !msg.error); authWs.send({portfolio:1}); }
-        if (msg.error && msg.msg_type !== "buy") { showToast("Error: "+msg.error.message, false); setPropLoading(false); setBuyLoading(false); }
+        if (msg.msg_type === "buy" && msg.req_id !== 9002)       { setBuyResult(msg.buy); setBuyLoading(false); showToast(msg.error ? "Buy failed: "+msg.error.message : "✓ Contract #"+msg.buy?.contract_id+" purchased", !msg.error); authWs.send({portfolio:1}); }
+
+        if (msg.error && msg.msg_type !== "buy" && msg.msg_type !== "proposal" && msg.msg_type !== "proposal_open_contract") { showToast("Error: "+msg.error.message, false); setPropLoading(false); setBuyLoading(false); }
       }
     });
+
+    function setAuthBalanceRefresh() { authWs.send({ portfolio: 1 }); }
+
+    // Bot round trigger — fires next trade when idle & running
+    useEffect(() => {
+      if (!botRunning || botStatus !== "idle") return;
+      const st = botStateRef.current;
+      if (!st.sym) { showToast("Bot: select a market first", false); setBotRunning(false); return; }
+      const contract_type = st.type === "evenodd"
+        ? (st.prediction === "even" ? "DIGITEVEN" : "DIGITODD")
+        : (st.prediction === "over" ? "DIGITOVER" : "DIGITUNDER");
+      const req = {
+        proposal: 1, amount: st.stake, basis: "stake",
+        contract_type, currency: "USD", duration: 1, duration_unit: "t",
+        underlying_symbol: st.sym, req_id: 9001,
+      };
+      if (st.type === "overunder") req.barrier = String(st.barrier);
+      setBotStatus("waiting_proposal");
+      authWs.send(req);
+    }, [botRunning, botStatus]);
 
     // Connect to public market data on load
     useEffect(() => { pubWs.connect(); }, []);
@@ -308,6 +409,24 @@
       setScanRunning(false);
     }
 
+    function requestStartBot() {
+      if (!botSym) { showToast("Select a market for the bot first", false); return; }
+      setBotConfirming(true);
+    }
+    function confirmStartBot() {
+      setBotConfirming(false);
+      setBotPL(0);
+      setBotStake(parseFloat(botBaseStake) || 1);
+      setBotTrades([]);
+      setBotStatus("idle");
+      setBotRunning(true);
+    }
+    function stopBot() {
+      setBotRunning(false);
+      setBotStatus("idle");
+      showToast("Bot stopped", true);
+    }
+
     function getQuote() {
       if (!selSym) { showToast("Please select an asset first", false); return; }
       if (!selCon) { showToast("No contract types loaded for this asset yet — try reselecting it, or check market connection", false); return; }
@@ -359,7 +478,7 @@
           e("span", { style:{fontSize:16,fontWeight:700} }, "TraderNova")
         ),
         e("div", { style:{display:"flex",flexDirection:"column",gap:2,padding:"20px 0",flex:1} },
-          [["market","◈","Markets"],["trade","⚡","Trade"],["scanner","◎","Scanner"],["portfolio","▤","Portfolio"]].map(([key,icon,label]) =>
+          [["market","◈","Markets"],["trade","⚡","Trade"],["scanner","◎","Scanner"],["bulk","▣","Bulk Trader"],["portfolio","▤","Portfolio"]].map(([key,icon,label]) =>
             e("button", { key, style:navBtn(key), onClick:()=>setTab(key) },
               e("span", { style:{fontSize:18,width:24} }, icon),
               e("span", null, label)
@@ -562,6 +681,122 @@
                 )
           );
         })(),
+
+        tab === "bulk" && e("div", { style:{padding:32,maxWidth:1000} },
+          e("h2", { style:{fontSize:22,fontWeight:700,margin:"0 0 8px",letterSpacing:-0.5} }, "Bulk Trader"),
+          e("p", { style:{color:C.muted,fontSize:13,marginBottom:24} }, "Automated trading bot — places real demo trades based on your rules. Use with caution."),
+
+          authState !== "authed"
+            ? e("div", { style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:24,maxWidth:340} },
+                e("p", { style:{color:C.sub,marginBottom:12} }, "Connect your demo account to use the bot."),
+                e("button", { style:{background:C.cyan,color:"#060d1a",border:"none",borderRadius:8,padding:"10px 14px",fontSize:13,fontWeight:700,cursor:"pointer",width:"100%"}, onClick:redirectToOAuth }, "Connect Demo Account")
+              )
+            : e("div", { style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:24,alignItems:"start"} },
+
+                // ── Config panel ──
+                e("div", { style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:24,display:"flex",flexDirection:"column",gap:14,opacity:botRunning?0.6:1,pointerEvents:botRunning?"none":"auto"} },
+                  e("label", { style:{fontSize:11,fontWeight:600,color:C.muted,letterSpacing:1,textTransform:"uppercase"} }, "Market"),
+                  e("select", { style:fieldStyle, value:botSym||"", onChange:ev=>setBotSym(ev.target.value) },
+                    e("option", { value:"" }, "Select market..."),
+                    symbols.map(s => e("option", { key:s.symbol, value:s.symbol }, s.display_name))
+                  ),
+
+                  e("label", { style:{fontSize:11,fontWeight:600,color:C.muted,letterSpacing:1,textTransform:"uppercase"} }, "Trade Type"),
+                  e("div", { style:{display:"flex",gap:8} },
+                    e("button", { style:{flex:1,padding:"9px",borderRadius:8,border:`1px solid ${botType==="evenodd"?C.cyan:C.border}`,background:botType==="evenodd"?"#0f172a":"#0a1628",color:botType==="evenodd"?C.cyan:C.sub,fontSize:13,fontWeight:600,cursor:"pointer"}, onClick:()=>{setBotType("evenodd");setBotPrediction("even");} }, "Even / Odd"),
+                    e("button", { style:{flex:1,padding:"9px",borderRadius:8,border:`1px solid ${botType==="overunder"?C.cyan:C.border}`,background:botType==="overunder"?"#0f172a":"#0a1628",color:botType==="overunder"?C.cyan:C.sub,fontSize:13,fontWeight:600,cursor:"pointer"}, onClick:()=>{setBotType("overunder");setBotPrediction("over");} }, "Over / Under")
+                  ),
+
+                  botType === "evenodd"
+                    ? e("div", { style:{display:"flex",gap:8} },
+                        e("button", { style:{flex:1,padding:"9px",borderRadius:8,border:`1px solid ${botPrediction==="even"?C.green:C.border}`,background:botPrediction==="even"?"#052e16":"#0a1628",color:botPrediction==="even"?C.green:C.sub,fontSize:13,fontWeight:600,cursor:"pointer"}, onClick:()=>setBotPrediction("even") }, "Predict EVEN"),
+                        e("button", { style:{flex:1,padding:"9px",borderRadius:8,border:`1px solid ${botPrediction==="odd"?"#f472b6":C.border}`,background:botPrediction==="odd"?"#3b0a24":"#0a1628",color:botPrediction==="odd"?"#f472b6":C.sub,fontSize:13,fontWeight:600,cursor:"pointer"}, onClick:()=>setBotPrediction("odd") }, "Predict ODD")
+                      )
+                    : e(React.Fragment, null,
+                        e("div", { style:{display:"flex",gap:8} },
+                          e("button", { style:{flex:1,padding:"9px",borderRadius:8,border:`1px solid ${botPrediction==="over"?C.green:C.border}`,background:botPrediction==="over"?"#052e16":"#0a1628",color:botPrediction==="over"?C.green:C.sub,fontSize:13,fontWeight:600,cursor:"pointer"}, onClick:()=>setBotPrediction("over") }, "Predict OVER"),
+                          e("button", { style:{flex:1,padding:"9px",borderRadius:8,border:`1px solid ${botPrediction==="under"?"#fb923c":C.border}`,background:botPrediction==="under"?"#3b1a05":"#0a1628",color:botPrediction==="under"?"#fb923c":C.sub,fontSize:13,fontWeight:600,cursor:"pointer"}, onClick:()=>setBotPrediction("under") }, "Predict UNDER")
+                        ),
+                        e("div", null,
+                          e("label", { style:{fontSize:11,fontWeight:600,color:C.muted,letterSpacing:1,textTransform:"uppercase",display:"block",marginBottom:6} }, "Barrier Digit (0-9)"),
+                          e("input", { style:fieldStyle, type:"number", min:0, max:9, value:botBarrier, onChange:ev=>setBotBarrier(Math.max(0,Math.min(9,Number(ev.target.value)))) })
+                        )
+                      ),
+
+                  e("div", { style:{display:"flex",gap:12} },
+                    e("div", { style:{flex:1} },
+                      e("label", { style:{fontSize:11,fontWeight:600,color:C.muted,letterSpacing:1,textTransform:"uppercase",display:"block",marginBottom:6} }, "Base Stake ($)"),
+                      e("input", { style:fieldStyle, type:"number", min:0.35, step:0.01, value:botBaseStake, onChange:ev=>setBotBaseStake(ev.target.value) })
+                    ),
+                    e("div", { style:{flex:1} },
+                      e("label", { style:{fontSize:11,fontWeight:600,color:C.muted,letterSpacing:1,textTransform:"uppercase",display:"block",marginBottom:6} }, "Martingale ×"),
+                      e("input", { style:fieldStyle, type:"number", min:1, step:0.1, value:botMultiplier, onChange:ev=>setBotMultiplier(ev.target.value) })
+                    )
+                  ),
+
+                  e("div", { style:{display:"flex",gap:12} },
+                    e("div", { style:{flex:1} },
+                      e("label", { style:{fontSize:11,fontWeight:600,color:C.green,letterSpacing:1,textTransform:"uppercase",display:"block",marginBottom:6} }, "Take Profit ($)"),
+                      e("input", { style:fieldStyle, type:"number", min:0.5, step:0.5, value:botTakeProfit, onChange:ev=>setBotTakeProfit(ev.target.value) })
+                    ),
+                    e("div", { style:{flex:1} },
+                      e("label", { style:{fontSize:11,fontWeight:600,color:"#f87171",letterSpacing:1,textTransform:"uppercase",display:"block",marginBottom:6} }, "Stop Loss ($)"),
+                      e("input", { style:fieldStyle, type:"number", min:0.5, step:0.5, value:botStopLoss, onChange:ev=>setBotStopLoss(ev.target.value) })
+                    )
+                  )
+                ),
+
+                // ── Live status / controls panel ──
+                e("div", { style:{display:"flex",flexDirection:"column",gap:16} },
+
+                  e("div", { style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:20} },
+                    e("div", { style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14} },
+                      e("span", { style:{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:1} }, "SESSION P/L"),
+                      e("span", { style:{display:"flex",alignItems:"center",gap:6} },
+                        e("span", { style:{width:7,height:7,borderRadius:"50%",background:botRunning?C.green:"#475569",display:"inline-block"} }),
+                        e("span", { style:{fontSize:10,color:C.muted,letterSpacing:1} }, botRunning ? (botStatus==="in_trade"?"IN TRADE":botStatus==="waiting_proposal"?"QUOTING":"RUNNING") : "STOPPED")
+                      )
+                    ),
+                    e("div", { style:{fontSize:32,fontFamily:"monospace",fontWeight:800,color: botPL>0?C.green:botPL<0?"#f87171":C.text, marginBottom:10} },
+                      (botPL>=0?"+":"")+"$"+botPL.toFixed(2)
+                    ),
+                    e("div", { style:{display:"flex",justifyContent:"space-between",fontSize:12,color:C.muted} },
+                      e("span", null, "Next stake: $"+botStake.toFixed(2)),
+                      e("span", null, botTrades.length+" trades")
+                    )
+                  ),
+
+                  !botRunning
+                    ? e("button", { style:{background:C.cyan,color:"#060d1a",border:"none",borderRadius:8,padding:14,fontSize:15,fontWeight:800,cursor:"pointer"}, onClick:requestStartBot }, "▶ Start Bot")
+                    : e("button", { style:{background:"#f87171",color:"#1f0a0a",border:"none",borderRadius:8,padding:14,fontSize:15,fontWeight:800,cursor:"pointer"}, onClick:stopBot }, "■ Stop Bot"),
+
+                  e("div", { style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px",maxHeight:280,overflow:"auto"} },
+                    e("div", { style:{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:1,marginBottom:10} }, "TRADE LOG"),
+                    botTrades.length === 0
+                      ? e("p", { style:{color:"#475569",fontSize:13} }, "No trades yet.")
+                      : botTrades.map((t,i) => e("div", { key:i, style:{display:"flex",justifyContent:"space-between",fontSize:12,padding:"6px 0",borderBottom: i<botTrades.length-1?"1px solid #0f172a":"none"} },
+                          e("span", { style:{color:C.muted} }, new Date(t.time).toLocaleTimeString()),
+                          e("span", { style:{color:C.sub} }, "$"+t.stake.toFixed(2)),
+                          e("span", { style:{color:t.won?C.green:"#f87171",fontWeight:700} }, (t.won?"WON ":"LOST ")+(t.profit>=0?"+":"")+"$"+t.profit.toFixed(2))
+                        ))
+                  )
+                )
+              ),
+
+          // ── Confirmation modal ──
+          botConfirming && e("div", { style:{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:2000} },
+            e("div", { style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:28,maxWidth:380} },
+              e("h3", { style:{fontSize:17,fontWeight:700,marginBottom:12} }, "Confirm Bot Start"),
+              e("p", { style:{color:C.sub,fontSize:13,lineHeight:1.6,marginBottom:18} },
+                "This will place real trades on your demo account automatically. Base stake $"+botBaseStake+", Martingale ×"+botMultiplier+", stopping at +$"+botTakeProfit+" profit or -$"+botStopLoss+" loss."
+              ),
+              e("div", { style:{display:"flex",gap:10} },
+                e("button", { style:{flex:1,padding:"10px",borderRadius:8,border:`1px solid ${C.border}`,background:"transparent",color:C.sub,fontSize:13,fontWeight:600,cursor:"pointer"}, onClick:()=>setBotConfirming(false) }, "Cancel"),
+                e("button", { style:{flex:1,padding:"10px",borderRadius:8,border:"none",background:C.green,color:"#052e16",fontSize:13,fontWeight:700,cursor:"pointer"}, onClick:confirmStartBot }, "Start Bot")
+              )
+            )
+          )
+        ),
 
         tab === "portfolio" && e("div", { style:{padding:32,maxWidth:900} },
           e("h2", { style:{fontSize:22,fontWeight:700,margin:"0 0 24px",letterSpacing:-0.5} }, "Portfolio"),
