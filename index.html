@@ -1280,21 +1280,7 @@
                         ))
                   )
                 )
-              ),
-
-          // ── Confirmation modal ──
-          botConfirming && e("div", { style:{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:2000} },
-            e("div", { style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:28,maxWidth:380} },
-              e("h3", { style:{fontSize:17,fontWeight:700,marginBottom:12} }, "Confirm Bot Start"),
-              e("p", { style:{color:C.sub,fontSize:13,lineHeight:1.6,marginBottom:18} },
-                "This will place real trades on your demo account automatically. Base stake $"+botBaseStake+", Martingale ×"+botMultiplier+", max stake cap $"+botMaxStake+", stopping at +$"+botTakeProfit+" profit or -$"+botStopLoss+" loss."
-              ),
-              e("div", { style:{display:"flex",gap:10} },
-                e("button", { style:{flex:1,padding:"10px",borderRadius:8,border:`1px solid ${C.border}`,background:"transparent",color:C.sub,fontSize:13,fontWeight:600,cursor:"pointer"}, onClick:()=>setBotConfirming(false) }, "Cancel"),
-                e("button", { style:{flex:1,padding:"10px",borderRadius:8,border:"none",background:C.green,color:"#052e16",fontSize:13,fontWeight:700,cursor:"pointer"}, onClick:confirmStartBot }, "Start Bot")
               )
-            )
-          )
         ),
 
         tab === "risk" && (() => {
@@ -1420,7 +1406,21 @@
         )
       ),
 
-      toast && e("div", { style:{position:"fixed",bottom:24,right:24,padding:"14px 20px",borderRadius:10,border:"1px solid",fontSize:13,fontWeight:600,maxWidth:360,zIndex:1000,boxShadow:"0 8px 32px rgba(0,0,0,0.5)",background:toast.ok?"#052e16":"#1f0a0a",borderColor:toast.ok?C.green:C.red,color:toast.ok?C.green:C.red} }, toast.msg)
+      toast && e("div", { style:{position:"fixed",bottom:24,right:24,padding:"14px 20px",borderRadius:10,border:"1px solid",fontSize:13,fontWeight:600,maxWidth:360,zIndex:1000,boxShadow:"0 8px 32px rgba(0,0,0,0.5)",background:toast.ok?"#052e16":"#1f0a0a",borderColor:toast.ok?C.green:C.red,color:toast.ok?C.green:C.red} }, toast.msg),
+
+      // ── Bot start confirmation modal (top-level so it works from Bulk Trader or any AI Robot run screen) ──
+      botConfirming && e("div", { style:{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:2000} },
+        e("div", { style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:28,maxWidth:380} },
+          e("h3", { style:{fontSize:17,fontWeight:700,marginBottom:12} }, "Confirm Bot Start"),
+          e("p", { style:{color:C.sub,fontSize:13,lineHeight:1.6,marginBottom:18} },
+            "This will place real trades on your demo account automatically. Base stake $"+botBaseStake+", Martingale ×"+botMultiplier+", max stake cap $"+botMaxStake+", stopping at +$"+botTakeProfit+" profit or -$"+botStopLoss+" loss."
+          ),
+          e("div", { style:{display:"flex",gap:10} },
+            e("button", { style:{flex:1,padding:"10px",borderRadius:8,border:`1px solid ${C.border}`,background:"transparent",color:C.sub,fontSize:13,fontWeight:600,cursor:"pointer"}, onClick:()=>setBotConfirming(false) }, "Cancel"),
+            e("button", { style:{flex:1,padding:"10px",borderRadius:8,border:"none",background:C.green,color:"#052e16",fontSize:13,fontWeight:700,cursor:"pointer"}, onClick:confirmStartBot }, "Start Bot")
+          )
+        )
+      )
     );
   }
 
