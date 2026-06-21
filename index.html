@@ -190,6 +190,7 @@
     const [scanCount, setScanCount]   = useState(1000);
     const [scanRunning, setScanRunning] = useState(false);
     const [scanMatchDigit, setScanMatchDigit] = useState(5);
+    const [activeRobot, setActiveRobot] = useState(null); // currently viewed robot preset (for robot-run screen)
     const scanSymRef = useRef(null);
     const scanCountRef = useRef(1000);
     useEffect(() => { scanSymRef.current = scanRunning ? scanSym : null; }, [scanSym, scanRunning]);
@@ -507,8 +508,8 @@
       setBotType(preset.type);
       setBotPrediction(preset.prediction);
       if (preset.barrier != null) setBotBarrier(preset.barrier);
-      setTab("bulk");
-      showToast(`"${preset.name}" loaded into Bulk Trader — pick a market and review your stakes before starting.`, true);
+      setActiveRobot(preset);
+      setTab("robotrun");
     }
 
     function requestStartBot() {
@@ -991,6 +992,150 @@
             ))
           )
         ),
+
+        tab === "robotrun" && activeRobot && (() => {
+          const isOU = activeRobot.type === "overunder";
+          // Use the scanner's live digit feed if it's already running on the same symbol; otherwise show a hint to pick a market.
+          const liveDigits = (botSym && scanSym === botSym) ? scanTicks.slice(-15) : ticks[botSym] ? ticks[botSym].slice(-15).map(q => Number(String(q).split(".")[0].slice(-1))) : [];
+          const recentForTrigger = scanSym === botSym ? scanTicks.slice(-20) : [];
+          const trgTotal = recentForTrigger.length || 1;
+
+          let leftLabel, rightLabel, leftDesc, rightDesc, leftPct, rightPct, leftTriggered, rightTriggered, leftColor, rightColor;
+          if (isOU) {
+            const overCount = recentForTrigger.filter(d => d > activeRobot.barrier).length;
+            const underBarrier = 9 - activeRobot.barrier;
+            const underCount = recentForTrigger.filter(d => d < underBarrier).length;
+            leftLabel = "Over "+activeRobot.barrier; rightLabel = "Under "+underBarrier;
+            leftDesc = "If last digit > "+activeRobot.barrier; rightDesc = "If last digit < "+underBarrier;
+            leftPct = ((overCount/trgTotal)*100).toFixed(0); rightPct = ((underCount/trgTotal)*100).toFixed(0);
+            leftTriggered = recentForTrigger.length > 0 && recentForTrigger[recentForTrigger.length-1] > activeRobot.barrier;
+            rightTriggered = recentForTrigger.length > 0 && recentForTrigger[recentForTrigger.length-1] < underBarrier;
+            leftColor = C.green; rightColor = "#fb923c";
+          } else {
+            const evenCount = recentForTrigger.filter(d => d % 2 === 0).length;
+            const oddCount = recentForTrigger.filter(d => d % 2 !== 0).length;
+            leftLabel = "Even"; rightLabel = "Odd";
+            leftDesc = "Trade EVEN next"; rightDesc = "Trade ODD next";
+            leftPct = ((evenCount/trgTotal)*100).toFixed(0); rightPct = ((oddCount/trgTotal)*100).toFixed(0);
+            leftTriggered = recentForTrigger.length > 0 && recentForTrigger[recentForTrigger.length-1] % 2 === 0;
+            rightTriggered = recentForTrigger.length > 0 && recentForTrigger[recentForTrigger.length-1] % 2 !== 0;
+            leftColor = C.cyan; rightColor = "#f472b6";
+          }
+
+          return e("div", { style:{padding:32,maxWidth:1000} },
+            e("button", { style:{background:"none",border:"none",color:C.muted,fontSize:13,cursor:"pointer",marginBottom:16,padding:0}, onClick:()=>setTab("robots") }, "← Back to robots"),
+
+            e("div", { style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20} },
+              e("div", null,
+                e("h2", { style:{fontSize:20,fontWeight:700,margin:0} }, activeRobot.name),
+                e("div", { style:{display:"flex",alignItems:"center",gap:6,marginTop:4} },
+                  e("span", { style:{width:7,height:7,borderRadius:"50%",background:botRunning?C.green:"#475569",display:"inline-block"} }),
+                  e("span", { style:{fontSize:11,color:C.muted,letterSpacing:1} }, botRunning ? "BOT RUNNING" : "BOT INACTIVE")
+                )
+              ),
+              !botRunning
+                ? e("button", { style:{background:C.cyan,color:"#060d1a",border:"none",borderRadius:8,padding:"9px 18px",fontSize:13,fontWeight:700,cursor:"pointer"}, onClick:requestStartBot }, "Start Bot")
+                : e("button", { style:{background:"#f87171",color:"#1f0a0a",border:"none",borderRadius:8,padding:"9px 18px",fontSize:13,fontWeight:700,cursor:"pointer"}, onClick:stopBot }, "Stop Bot")
+            ),
+
+            // Live ticker
+            e("div", { style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:18,marginBottom:20} },
+              e("div", { style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10} },
+                e("select", { style:{...fieldStyle,width:220}, value:botSym||"", onChange:ev=>{ setBotSym(ev.target.value); startScan(ev.target.value); } },
+                  e("option", { value:"" }, "Select market..."),
+                  symbols.map(s => e("option", { key:s.symbol, value:s.symbol }, s.display_name))
+                ),
+                e("div", { style:{textAlign:"right"} },
+                  e("span", { style:{fontFamily:"monospace",fontSize:18,fontWeight:700,color:C.cyan} }, botSym && ticks[botSym]?.length ? Number(ticks[botSym][ticks[botSym].length-1]).toFixed(4) : "—"),
+                  e("span", { style:{marginLeft:8,fontSize:10,color:C.green} }, "● LIVE")
+                )
+              ),
+              e("div", { style:{display:"flex",gap:6,flexWrap:"wrap"} },
+                liveDigits.length === 0
+                  ? e("span", { style:{color:"#475569",fontSize:12} }, "Select a market to see live digits")
+                  : liveDigits.map((d,i) => e("span", { key:i, style:{
+                      width:30,height:30,borderRadius:7,display:"flex",alignItems:"center",justifyContent:"center",
+                      fontSize:13,fontWeight:800,background: i===liveDigits.length-1 ? C.cyan : "#0a1628",
+                      color: i===liveDigits.length-1 ? "#060d1a" : C.sub,
+                    } }, d))
+              )
+            ),
+
+            e("div", { style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:20} },
+
+              // Compact config
+              e("div", { style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:20,display:"flex",flexDirection:"column",gap:14,opacity:botRunning?0.6:1,pointerEvents:botRunning?"none":"auto"} },
+                e("div", { style:{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:1} }, "BOT CONTROLS"),
+                e("div", { style:{display:"flex",gap:10} },
+                  e("div", { style:{flex:1} },
+                    e("label", { style:{fontSize:10,color:C.muted,display:"block",marginBottom:4} }, "Stake"),
+                    e("input", { style:fieldStyle, type:"number", min:0.35, step:0.01, value:botBaseStake, onChange:ev=>setBotBaseStake(ev.target.value) })
+                  ),
+                  e("div", { style:{flex:1} },
+                    e("label", { style:{fontSize:10,color:C.muted,display:"block",marginBottom:4} }, "Max Stake Cap ($)"),
+                    e("input", { style:fieldStyle, type:"number", min:1, value:botMaxStake, onChange:ev=>setBotMaxStake(ev.target.value) })
+                  )
+                ),
+                e("div", { style:{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"6px 0"} },
+                  e("div", null,
+                    e("div", { style:{fontSize:13,color:C.text,fontWeight:600} }, "Martingale System"),
+                    e("div", { style:{fontSize:10,color:"#475569"} }, "Increase stake after a loss")
+                  ),
+                  e("input", { type:"checkbox", checked:botUseMartingale, onChange:ev=>setBotUseMartingale(ev.target.checked), style:{width:18,height:18,cursor:"pointer"} })
+                ),
+                botUseMartingale && e("div", null,
+                  e("label", { style:{fontSize:10,color:C.muted,display:"block",marginBottom:4} }, "Martingale ×"),
+                  e("input", { style:fieldStyle, type:"number", min:1, step:0.1, value:botMultiplier, onChange:ev=>setBotMultiplier(ev.target.value) })
+                ),
+                e("div", { style:{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"6px 0"} },
+                  e("div", { style:{fontSize:13,color:C.text,fontWeight:600} }, "Take Profit / Stop Loss")
+                ),
+                e("div", { style:{display:"flex",gap:10} },
+                  e("input", { style:fieldStyle, type:"number", min:0.5, step:0.5, value:botTakeProfit, onChange:ev=>setBotTakeProfit(ev.target.value), placeholder:"Take profit" }),
+                  e("input", { style:fieldStyle, type:"number", min:0.5, step:0.5, value:botStopLoss, onChange:ev=>setBotStopLoss(ev.target.value), placeholder:"Stop loss" })
+                )
+              ),
+
+              // Signal conditions
+              e("div", { style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:20} },
+                e("div", { style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14} },
+                  e("div", { style:{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:1} }, "SIGNAL CONDITIONS"),
+                  e("span", { style:{fontSize:10,color:C.cyan} }, "✦ AI")
+                ),
+                e("div", { style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12} },
+                  e("div", { style:{background: leftTriggered?"#052e16":"#0a1628", border:`1px solid ${leftTriggered?leftColor:C.border}`, borderRadius:8, padding:"12px" } },
+                    e("div", { style:{display:"flex",justifyContent:"space-between",marginBottom:6} },
+                      e("span", { style:{fontSize:12,fontWeight:700,color:C.text} }, leftLabel),
+                      leftTriggered && e("span", { style:{fontSize:10,color:leftColor,fontWeight:700} }, "TRIGGERED")
+                    ),
+                    e("div", { style:{fontSize:11,color:C.muted,marginBottom:8} }, leftDesc),
+                    e("div", { style:{fontSize:18,fontFamily:"monospace",fontWeight:800,color:leftColor} }, leftPct+"%")
+                  ),
+                  e("div", { style:{background: rightTriggered?"#1f1206":"#0a1628", border:`1px solid ${rightTriggered?rightColor:C.border}`, borderRadius:8, padding:"12px" } },
+                    e("div", { style:{display:"flex",justifyContent:"space-between",marginBottom:6} },
+                      e("span", { style:{fontSize:12,fontWeight:700,color:C.text} }, rightLabel),
+                      rightTriggered && e("span", { style:{fontSize:10,color:rightColor,fontWeight:700} }, "TRIGGERED")
+                    ),
+                    e("div", { style:{fontSize:11,color:C.muted,marginBottom:8} }, rightDesc),
+                    e("div", { style:{fontSize:18,fontFamily:"monospace",fontWeight:800,color:rightColor} }, rightPct+"%")
+                  )
+                ),
+                e("p", { style:{color:"#475569",fontSize:11,marginTop:14,lineHeight:1.5} }, activeRobot.desc)
+              )
+            ),
+
+            // Live session stats (reuses bot engine state)
+            e("div", { style:{marginTop:20,background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:20} },
+              e("div", { style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10} },
+                e("span", { style:{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:1} }, "SESSION P/L"),
+                e("span", { style:{fontSize:11,color:C.muted} }, botTrades.length+" trades")
+              ),
+              e("div", { style:{fontSize:26,fontFamily:"monospace",fontWeight:800,color: botPL>0?C.green:botPL<0?"#f87171":C.text} },
+                (botPL>=0?"+":"")+"$"+botPL.toFixed(2)
+              )
+            )
+          );
+        })(),
 
         tab === "bulk" && e("div", { style:{padding:32,maxWidth:1000} },
           e("h2", { style:{fontSize:22,fontWeight:700,margin:"0 0 8px",letterSpacing:-0.5} }, "Bulk Trader"),
