@@ -178,9 +178,10 @@
     const [buyLoading, setBuyLoading] = useState(false);
     const [balance, setBalance]     = useState(null);
     const [portfolio, setPortfolio] = useState([]);
-    const [tab, setTab]             = useState("market");
-    const [toast, setToast]         = useState(null);
+    const [tab, setTab]             = useState("dashboard");    const [toast, setToast]         = useState(null);
     const propIdRef = useRef(null);
+    const botTradesRef = useRef([]);
+    useEffect(() => { botTradesRef.current = botTrades; }, [botTrades]);
     const pendingBuyRef = useRef(false);
 
     // Scanner state
@@ -190,7 +191,8 @@
     const [scanCount, setScanCount]   = useState(1000);
     const [scanRunning, setScanRunning] = useState(false);
     const [scanMatchDigit, setScanMatchDigit] = useState(5);
-    const [activeRobot, setActiveRobot] = useState(null); // currently viewed robot preset (for robot-run screen)
+    const [activeRobot, setActiveRobot] = useState(null);
+    const [sessionHistory, setSessionHistory] = useState([]);
     const scanSymRef = useRef(null);
     const scanCountRef = useRef(1000);
     useEffect(() => { scanSymRef.current = scanRunning ? scanSym : null; }, [scanSym, scanRunning]);
@@ -372,18 +374,29 @@
             setBotStake(nextStake);
             // Recovery prediction: switch prediction after a loss, revert to initial after a win
             currentPredictionRef.current = won ? st.prediction : st.recoveryPrediction;
+            // Helper to save session
+            const saveSession = (reason) => {
+              setSessionHistory(prev => [{
+                id: Date.now(), time: new Date().toLocaleString(),
+                strategy: st.type === "evenodd" ? "Even/Odd" : "Over/Under",
+                sym: st.sym, reason,
+                trades: botTradesRef.current.length,
+                won: botTradesRef.current.filter(t=>t.won).length,
+                pl: newPL, baseStake: st.baseStake,
+              }, ...prev].slice(0, 50));
+            };
             // Check stop conditions
             if (newPL >= st.takeProfit) {
               showToast(`🎯 Take-profit hit! +$${newPL.toFixed(2)}`, true);
-              setBotRunning(false); setBotStatus("idle");
+              setBotRunning(false); setBotStatus("idle"); saveSession("Take-profit");
             } else if (newPL <= -st.stopLoss) {
               showToast(`🛑 Stop-loss hit. ${newPL.toFixed(2)}`, false);
-              setBotRunning(false); setBotStatus("idle");
+              setBotRunning(false); setBotStatus("idle"); saveSession("Stop-loss");
             } else if (!won && rawNextStake > st.maxStake) {
               showToast(`⚠️ Max stake ($${st.maxStake.toFixed(2)}) reached — bot stopped for safety.`, false);
-              setBotRunning(false); setBotStatus("idle");
+              setBotRunning(false); setBotStatus("idle"); saveSession("Max stake");
             } else if (botRunningRef.current) {
-              setBotStatus("idle"); // ready for next round; effect below will trigger it
+              setBotStatus("idle");
             } else {
               setBotStatus("idle");
             }
@@ -691,6 +704,18 @@
       setBotRunning(false);
       setBotStatus("idle");
       showToast("Bot stopped", true);
+      if (botTrades.length > 0) {
+        setSessionHistory(prev => [{
+          id: Date.now(),
+          time: new Date().toLocaleString(),
+          strategy: botType === "evenodd" ? "Even/Odd" : "Over/Under",
+          sym: botSym,
+          trades: botTrades.length,
+          won: botTrades.filter(t=>t.won).length,
+          pl: botPL,
+          baseStake: parseFloat(botBaseStake)||1,
+        }, ...prev].slice(0, 50));
+      }
     }
 
     function getQuote() {
@@ -744,7 +769,7 @@
           e("span", { style:{fontSize:16,fontWeight:700} }, "TraderNova")
         ),
         e("div", { style:{display:"flex",flexDirection:"column",gap:2,padding:"20px 0",flex:1} },
-          [["market","◈","Markets"],["trade","⚡","Trade"],["charts","▲","Charts"],["scanner","◎","Scanner"],["robots","✦","AI Robots"],["autotrader","⚙","Auto Trader"],["bulk","▣","Bulk Trader"],["risk","⛨","Risk Calc"],["portfolio","▤","Portfolio"]].map(([key,icon,label]) =>
+          [["dashboard","⬡","Dashboard"],["market","◈","Markets"],["trade","⚡","Trade"],["charts","▲","Charts"],["scanner","◎","Scanner"],["robots","✦","AI Robots"],["autotrader","⚙","Auto Trader"],["bulk","▣","Bulk Trader"],["risk","⛨","Risk Calc"],["reports","▦","Reports"],["portfolio","▤","Portfolio"]].map(([key,icon,label]) =>
             e("button", { key, style:navBtn(key), onClick:()=>setTab(key) },
               e("span", { style:{fontSize:18,width:24} }, icon),
               e("span", null, label)
@@ -775,6 +800,174 @@
       ),
 
       e("main", { style:{flex:1,overflow:"auto",background:C.bg} },
+
+        // ── DASHBOARD TAB ──────────────────────────────────────────────────────
+        tab === "dashboard" && e("div", { style:{padding:32,maxWidth:1100} },
+          e("div", { style:{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:28} },
+            e("div", null,
+              e("h2", { style:{fontSize:24,fontWeight:800,margin:0,letterSpacing:-0.5} }, "Welcome back 👋"),
+              e("p", { style:{color:C.muted,fontSize:14,marginTop:4} }, new Date().toLocaleDateString("en-US",{weekday:"long",year:"numeric",month:"long",day:"numeric"}))
+            ),
+            authState === "authed" && e("div", { style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 20px",textAlign:"right"} },
+              e("div", { style:{fontSize:11,color:C.muted,letterSpacing:1} }, "DEMO BALANCE"),
+              e("div", { style:{fontSize:24,fontFamily:"monospace",fontWeight:800,color:C.text} }, "$"+fmtMoney(balance?.balance)),
+              e("div", { style:{fontSize:11,color:C.muted} }, balance?.currency||"USD")
+            )
+          ),
+
+          // Stats row
+          e("div", { style:{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:16,marginBottom:28} },
+            [
+              { label:"Session Trades", value: botTrades.length + speedbots.reduce((s,b)=>s+b.tradeLog.length,0), color:C.text },
+              { label:"Session Wins", value: botTrades.filter(t=>t.won).length + speedbots.reduce((s,b)=>s+b.tradeLog.filter(t=>t.won).length,0), color:C.green },
+              { label:"Bulk Bot P/L", value: (botPL>=0?"+":"")+"$"+botPL.toFixed(2), color:botPL>=0?C.green:"#f87171" },
+              { label:"Sessions Saved", value: sessionHistory.length, color:C.cyan },
+            ].map(({label,value,color}) =>
+              e("div", { key:label, style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"18px 20px"} },
+                e("div", { style:{fontSize:11,color:C.muted,letterSpacing:1,marginBottom:8} }, label.toUpperCase()),
+                e("div", { style:{fontSize:22,fontWeight:800,fontFamily:"monospace",color} }, value)
+              )
+            )
+          ),
+
+          // Quick launch + Markets preview
+          e("div", { style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:24} },
+
+            // Quick launch
+            e("div", { style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:20} },
+              e("div", { style:{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:1,marginBottom:16} }, "QUICK LAUNCH"),
+              e("div", { style:{display:"flex",flexDirection:"column",gap:10} },
+                [
+                  { label:"⚡ Manual Trade",    tab:"trade",      color:C.cyan },
+                  { label:"▲ Live Chart",       tab:"charts",     color:"#a78bfa" },
+                  { label:"◎ Signal Scanner",   tab:"scanner",    color:"#60a5fa" },
+                  { label:"✦ AI Robots",        tab:"robots",     color:C.green },
+                  { label:"⚙ Auto Trader",      tab:"autotrader", color:"#fb923c" },
+                  { label:"▣ Bulk Trader",      tab:"bulk",       color:"#f472b6" },
+                ].map(({label,tab:t,color}) =>
+                  e("button", { key:t, style:{background:"#0a1628",border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 14px",color,fontSize:13,fontWeight:600,cursor:"pointer",textAlign:"left",width:"100%"}, onClick:()=>setTab(t) }, label)
+                )
+              )
+            ),
+
+            // Recent sessions
+            e("div", { style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:20} },
+              e("div", { style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16} },
+                e("div", { style:{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:1} }, "RECENT SESSIONS"),
+                e("button", { style:{background:"none",border:"none",color:C.cyan,fontSize:12,cursor:"pointer"}, onClick:()=>setTab("reports") }, "View all →")
+              ),
+              sessionHistory.length === 0
+                ? e("div", { style:{textAlign:"center",padding:"24px 0",color:"#475569",fontSize:13} }, "No sessions yet — run a bot to see results here.")
+                : sessionHistory.slice(0,5).map(s =>
+                    e("div", { key:s.id, style:{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:`1px solid #0f172a`} },
+                      e("div", null,
+                        e("div", { style:{fontSize:13,fontWeight:600,color:C.text} }, s.strategy),
+                        e("div", { style:{fontSize:11,color:C.muted} }, s.time)
+                      ),
+                      e("div", { style:{textAlign:"right"} },
+                        e("div", { style:{fontSize:14,fontFamily:"monospace",fontWeight:700,color:s.pl>=0?C.green:"#f87171"} }, (s.pl>=0?"+":"")+"$"+s.pl.toFixed(2)),
+                        e("div", { style:{fontSize:11,color:C.muted} }, s.won+"/"+s.trades+" won")
+                      )
+                    )
+                  )
+            )
+          ),
+
+          // Live market overview
+          e("div", { style:{marginTop:24,background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:20} },
+            e("div", { style:{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:1,marginBottom:16} }, "LIVE MARKET OVERVIEW"),
+            e("div", { style:{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:10} },
+              symbols.slice(0,12).map(sym => {
+                const st = ticks[sym.symbol]||[];
+                const last = st.slice(-1)[0], prev2 = st.slice(-2)[0];
+                const up = last!=null&&prev2!=null&&last>prev2, dn = last!=null&&prev2!=null&&last<prev2;
+                return e("div", { key:sym.symbol, onClick:()=>{setSelSym(sym.symbol);setTab("trade");}, style:{background:"#0a1628",border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 12px",cursor:"pointer"} },
+                  e("div", { style:{fontSize:11,fontWeight:600,color:C.sub,marginBottom:4} }, sym.display_name),
+                  e("div", { style:{fontSize:13,fontFamily:"monospace",fontWeight:700,color:up?C.green:dn?"#f87171":C.text} }, last!=null?Number(last).toFixed(2):"—")
+                );
+              })
+            )
+          )
+        ),
+
+        // ── REPORTS TAB ────────────────────────────────────────────────────────
+        tab === "reports" && e("div", { style:{padding:32,maxWidth:900} },
+          e("div", { style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:24} },
+            e("h2", { style:{fontSize:22,fontWeight:700,margin:0,letterSpacing:-0.5} }, "Reports"),
+            sessionHistory.length > 0 && e("button", { style:{background:"none",border:`1px solid ${C.border}`,color:"#f87171",borderRadius:8,padding:"6px 14px",fontSize:12,cursor:"pointer"}, onClick:()=>setSessionHistory([]) }, "Clear history")
+          ),
+
+          sessionHistory.length === 0
+            ? e("div", { style:{background:C.card,border:`1px dashed ${C.border}`,borderRadius:12,padding:48,textAlign:"center"} },
+                e("div", { style:{fontSize:40,marginBottom:12} }, "▦"),
+                e("p", { style:{color:"#475569",fontSize:14} }, "No sessions recorded yet. Run any bot and stop it to save a session here.")
+              )
+            : e(React.Fragment, null,
+
+                // Cumulative P/L over sessions
+                (() => {
+                  const sessions = [...sessionHistory].reverse();
+                  const cumPL = sessions.reduce((acc, s, i) => [...acc, (acc[i-1]||0) + s.pl], []);
+                  const maxAbs = Math.max(1, ...cumPL.map(Math.abs));
+                  const W = 800, H = 120, pad = 20;
+                  const plotW = W - pad*2, plotH = H - pad*2;
+                  const pts = cumPL.map((v,i) => {
+                    const x = pad + (i/(Math.max(cumPL.length-1,1)))*plotW;
+                    const y = pad + plotH/2 - (v/maxAbs)*(plotH/2);
+                    return `${x},${y}`;
+                  }).join(" ");
+                  const lastPL = cumPL[cumPL.length-1] || 0;
+                  return e("div", { style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:20,marginBottom:20} },
+                    e("div", { style:{display:"flex",justifyContent:"space-between",marginBottom:12} },
+                      e("div", { style:{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:1} }, "CUMULATIVE P/L"),
+                      e("div", { style:{fontSize:18,fontFamily:"monospace",fontWeight:800,color:lastPL>=0?C.green:"#f87171"} }, (lastPL>=0?"+":"")+"$"+lastPL.toFixed(2))
+                    ),
+                    cumPL.length >= 2 && e("svg", { width:"100%", height:H, viewBox:`0 0 ${W} ${H}`, style:{display:"block"} },
+                      e("line", { x1:pad, y1:pad+plotH/2, x2:W-pad, y2:pad+plotH/2, stroke:"#1e293b", strokeWidth:1, strokeDasharray:"4" }),
+                      e("polyline", { points:pts, fill:"none", stroke:lastPL>=0?C.green:"#f87171", strokeWidth:2, strokeLinejoin:"round" })
+                    )
+                  );
+                })(),
+
+                // Summary stats
+                (() => {
+                  const totalPL = sessionHistory.reduce((s,r)=>s+r.pl,0);
+                  const totalTrades = sessionHistory.reduce((s,r)=>s+r.trades,0);
+                  const totalWon = sessionHistory.reduce((s,r)=>s+r.won,0);
+                  const winRate = totalTrades ? ((totalWon/totalTrades)*100).toFixed(1) : "0.0";
+                  const profitable = sessionHistory.filter(s=>s.pl>0).length;
+                  return e("div", { style:{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:16,marginBottom:20} },
+                    [
+                      { label:"Total P/L", value:(totalPL>=0?"+":"")+"$"+totalPL.toFixed(2), color:totalPL>=0?C.green:"#f87171" },
+                      { label:"Win Rate", value:winRate+"%", color:parseFloat(winRate)>=50?C.green:"#f87171" },
+                      { label:"Total Trades", value:totalTrades, color:C.text },
+                      { label:"Profitable Sessions", value:profitable+"/"+sessionHistory.length, color:C.cyan },
+                    ].map(({label,value,color}) =>
+                      e("div", { key:label, style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px"} },
+                        e("div", { style:{fontSize:10,color:C.muted,letterSpacing:1,marginBottom:6} }, label.toUpperCase()),
+                        e("div", { style:{fontSize:18,fontFamily:"monospace",fontWeight:700,color} }, value)
+                      )
+                    )
+                  );
+                })(),
+
+                // Session list
+                e("div", { style:{border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden"} },
+                  e("div", { style:{display:"grid",gridTemplateColumns:"2fr 1fr 1fr 1fr 1fr",padding:"10px 20px",background:"#0a1628",fontSize:11,fontWeight:700,color:"#475569",letterSpacing:1,textTransform:"uppercase",borderBottom:`1px solid ${C.border}`} },
+                    ["Time","Strategy","Trades","Win Rate","P/L"].map(h=>e("span",{key:h},h))
+                  ),
+                  sessionHistory.map(s =>
+                    e("div", { key:s.id, style:{display:"grid",gridTemplateColumns:"2fr 1fr 1fr 1fr 1fr",padding:"12px 20px",fontSize:13,color:C.sub,borderBottom:`1px solid #0f172a`,alignItems:"center"} },
+                      e("span", { style:{fontSize:12} }, s.time),
+                      e("span", { style:{color:C.text,fontWeight:600} }, s.strategy),
+                      e("span", null, s.trades),
+                      e("span", null, s.trades ? ((s.won/s.trades)*100).toFixed(0)+"%" : "—"),
+                      e("span", { style:{fontFamily:"monospace",fontWeight:700,color:s.pl>=0?C.green:"#f87171"} }, (s.pl>=0?"+":"")+"$"+s.pl.toFixed(2))
+                    )
+                  )
+                )
+              )
+        ),
 
         tab === "market" && e("div", { style:{padding:32,maxWidth:1100} },
           e("h2", { style:{fontSize:22,fontWeight:700,margin:"0 0 24px",letterSpacing:-0.5} }, "Live Markets"),
