@@ -209,6 +209,24 @@
     const [botStopLoss, setBotStopLoss] = useState("10");
     const [botMaxStake, setBotMaxStake] = useState("20");
 
+    // Speedbot state — multiple independent mini-bots running concurrently
+    const SPEEDBOT_TYPES = [
+      { id:"eo_digits", title:"Even/Odd (Digits)", stat:"evenodd", mode:"digits" },
+      { id:"eo_pct",    title:"Even/Odd (Percentage)", stat:"evenodd", mode:"percent" },
+      { id:"ou_digits", title:"Over/Under (Digits)", stat:"overunder", mode:"digits" },
+      { id:"ou_pct",    title:"Over/Under (Percentage)", stat:"overunder", mode:"percent" },
+      { id:"risefall",  title:"Rise/Fall", stat:"risefall", mode:"percent" },
+    ];
+    const [speedbots, setSpeedbots] = useState(() => SPEEDBOT_TYPES.map(t => ({
+      ...t,
+      sym: null, ticksWindow: 5, barrier: 5, threshold: 60,
+      stake: "1", multiplier: "1.2",
+      running: false, status: "idle", pl: 0, currentStake: 1, trades: 0,
+    })));
+    const speedbotsRef = useRef(speedbots);
+    useEffect(() => { speedbotsRef.current = speedbots; }, [speedbots]);
+    const speedbotPropIdRef = useRef({}); // botId -> last proposal id awaited
+
     // Risk Calculator state
     const [rcBaseStake, setRcBaseStake]   = useState("1");
     const [rcMultiplier, setRcMultiplier] = useState("2");
@@ -373,8 +391,45 @@
           return;
         }
 
+        // ── Speedbot proposal/buy/settlement routing (req_id 9100+/9200+/9300+ per bot index) ──
+        if (msg.msg_type === "proposal" && msg.req_id >= 9100 && msg.req_id < 9200) {
+          const idx = msg.req_id - 9100;
+          if (msg.error) {
+            setSpeedbots(prev => prev.map((b,i) => i===idx ? { ...b, running:false, status:"idle" } : b));
+            showToast(`Speedbot "${speedbotsRef.current[idx]?.title}" quote failed: `+msg.error.message, false);
+          } else {
+            authWs.send({ buy: msg.proposal.id, price: parseFloat(msg.proposal.ask_price), req_id: 9200 + idx });
+          }
+          return;
+        }
+        if (msg.msg_type === "buy" && msg.req_id >= 9200 && msg.req_id < 9300) {
+          const idx = msg.req_id - 9200;
+          if (msg.error) {
+            setSpeedbots(prev => prev.map((b,i) => i===idx ? { ...b, running:false, status:"idle" } : b));
+            showToast(`Speedbot "${speedbotsRef.current[idx]?.title}" trade failed: `+msg.error.message, false);
+          } else {
+            setSpeedbots(prev => prev.map((b,i) => i===idx ? { ...b, status:"in_trade" } : b));
+            authWs.send({ proposal_open_contract: 1, contract_id: msg.buy.contract_id, subscribe: 1, req_id: 9300 + idx });
+          }
+          return;
+        }
+        if (msg.msg_type === "proposal_open_contract" && msg.req_id >= 9300 && msg.req_id < 9400) {
+          const idx = msg.req_id - 9300;
+          const c = msg.proposal_open_contract;
+          if (c && c.is_sold) {
+            const profit = parseFloat(c.profit);
+            setSpeedbots(prev => prev.map((b,i) => {
+              if (i !== idx) return b;
+              const newPL = b.pl + profit;
+              const nextStake = profit > 0 ? parseFloat(b.stake) : +(b.currentStake * parseFloat(b.multiplier)).toFixed(2);
+              return { ...b, pl:newPL, currentStake:nextStake, trades:b.trades+1, status:"idle" };
+            }));
+          }
+          return;
+        }
+
         // ── Manual (Trade tab) flows ──
-        if (msg.msg_type === "proposal" && msg.req_id !== 9001)  {
+        if (msg.msg_type === "proposal" && msg.req_id == null)  {
           console.log("proposal msg:", msg);
           if (msg.error) {
             showToast("Quote failed: " + msg.error.message, false);
@@ -389,13 +444,71 @@
             }
           }
         }
-        if (msg.msg_type === "buy" && msg.req_id !== 9002)       { setBuyResult(msg.buy); setBuyLoading(false); showToast(msg.error ? "Buy failed: "+msg.error.message : "✓ Contract #"+msg.buy?.contract_id+" purchased", !msg.error); authWs.send({portfolio:1}); }
+        if (msg.msg_type === "buy" && msg.req_id == null)       { setBuyResult(msg.buy); setBuyLoading(false); showToast(msg.error ? "Buy failed: "+msg.error.message : "✓ Contract #"+msg.buy?.contract_id+" purchased", !msg.error); authWs.send({portfolio:1}); }
 
         if (msg.error && msg.msg_type !== "buy" && msg.msg_type !== "proposal" && msg.msg_type !== "proposal_open_contract") { showToast("Error: "+msg.error.message, false); setPropLoading(false); setBuyLoading(false); }
       }
     });
 
     function setAuthBalanceRefresh() { authWs.send({ portfolio: 1 }); }
+
+    // Speedbot trigger evaluator
+    function evalSpeedbot(bot, digits, prices) {
+      const w = bot.ticksWindow || 5;
+      const recent = digits.slice(-w);
+      const recentP = prices.slice(-w);
+      let leftPct = 0, rightPct = 0;
+      const total = Math.max(1, recent.length);
+
+      if (bot.stat === "evenodd") {
+        const even = recent.filter(d => d % 2 === 0).length;
+        leftPct  = +((even / total) * 100).toFixed(1);
+        rightPct = +(((total - even) / total) * 100).toFixed(1);
+      } else if (bot.stat === "overunder") {
+        const over = recent.filter(d => d > (bot.barrier ?? 4)).length;
+        leftPct  = +((over / total) * 100).toFixed(1);
+        rightPct = +(((total - over) / total) * 100).toFixed(1);
+      } else if (bot.stat === "risefall") {
+        let rises = 0, falls = 0;
+        for (let i = 1; i < recentP.length; i++) {
+          if (recentP[i] > recentP[i-1]) rises++;
+          else if (recentP[i] < recentP[i-1]) falls++;
+        }
+        const mv = Math.max(1, rises + falls);
+        leftPct  = +((rises / mv) * 100).toFixed(1);
+        rightPct = +((falls / mv) * 100).toFixed(1);
+      }
+
+      const thr = bot.threshold || 60;
+      let signal = null;
+      if      (leftPct  >= thr) signal = bot.stat === "evenodd" ? "even"  : bot.stat === "risefall" ? "rise"  : "over";
+      else if (rightPct >= thr) signal = bot.stat === "evenodd" ? "odd"   : bot.stat === "risefall" ? "fall"  : "under";
+      return { signal, leftPct, rightPct };
+    }
+
+    // Speedbot round trigger
+    useEffect(() => {
+      speedbots.forEach((bot, idx) => {
+        if (!bot.running || bot.status !== "idle") return;
+        if (!bot.sym) return;
+        const digits = scanSym === bot.sym ? scanTicks : [];
+        const prices = scanSym === bot.sym ? scanPrices : [];
+        if (digits.length < (bot.ticksWindow || 5)) return; // need enough data
+        const { signal } = evalSpeedbot(bot, digits, prices);
+        if (!signal) return; // no trigger — wait for next tick
+        const ctMap = { even:"DIGITEVEN", odd:"DIGITODD", over:"DIGITOVER", under:"DIGITUNDER", rise:"CALL", fall:"PUT" };
+        const contract_type = ctMap[signal];
+        if (!contract_type) return;
+        const req = {
+          proposal: 1, amount: bot.currentStake, basis: "stake",
+          contract_type, currency: "USD", duration: 1, duration_unit: "t",
+          underlying_symbol: bot.sym, req_id: 9100 + idx,
+        };
+        if (bot.stat === "overunder") req.barrier = String(bot.barrier ?? 4);
+        setSpeedbots(prev => prev.map((b,i) => i===idx ? { ...b, status:"waiting" } : b));
+        authWs.send(req);
+      });
+    }, [speedbots, scanTicks, scanPrices]);
 
     // Bot round trigger — fires next trade when idle & running
     useEffect(() => {
@@ -493,6 +606,55 @@
       if (pubStatus === "connected") pubWs.send({ ticks: sym, subscribe: 1 });
     }
 
+    // Auto Trader tile definitions
+    const AUTO_TILES = [
+      { id:"eo_digits",  label:"Even/Odd",          sub:"Digits",      color:"#22d3ee", mode:"digits",  stat:"evenodd",   window:5,  threshold:60, tradeWhenOver:"even", tradeWhenUnder:"odd" },
+      { id:"eo_pct",     label:"Even/Odd",          sub:"Percentages", color:"#22d3ee", mode:"pct",     stat:"evenodd",   window:50, threshold:60, tradeWhenOver:"even", tradeWhenUnder:"odd" },
+      { id:"ou_digits",  label:"Over/Under",        sub:"Digits",      color:"#22c55e", mode:"digits",  stat:"overunder", window:3,  threshold:60, barrier:5, tradeWhenOver:"over", tradeWhenUnder:"under" },
+      { id:"ou_pct",     label:"Over/Under",        sub:"Percentages", color:"#22c55e", mode:"pct",     stat:"overunder", window:50, threshold:60, barrier:5, tradeWhenOver:"over", tradeWhenUnder:"under" },
+      { id:"rf_digits",  label:"Rise/Fall",         sub:"Momentum",    color:"#f472b6", mode:"pct",     stat:"risefall",  window:20, threshold:60, tradeWhenOver:"rise", tradeWhenUnder:"fall" },
+      { id:"md_pct",     label:"Match/Differ",      sub:"Percentages", color:"#a78bfa", mode:"pct",     stat:"matchdiffer", window:50, threshold:85, tradeWhenOver:"differ", tradeWhenUnder:"match" },
+    ];
+
+    // Evaluate a tile's trigger: returns { signal: "even"|"odd"|"over"|"under"|"rise"|"fall"|"match"|"differ"|null, leftPct, rightPct }
+    function evalTileTrigger(tile, digits, prices) {
+      const w = tile.window;
+      const recent = digits.slice(-w);
+      const recentP = prices.slice(-w);
+      let leftCount = 0, rightCount = 0, total = recent.length || 1;
+
+      if (tile.stat === "evenodd") {
+        leftCount  = recent.filter(d => d % 2 === 0).length;
+        rightCount = recent.filter(d => d % 2 !== 0).length;
+      } else if (tile.stat === "overunder") {
+        leftCount  = recent.filter(d => d > (tile.barrier ?? 4)).length;
+        rightCount = recent.filter(d => d < (tile.barrier ?? 4)).length;
+      } else if (tile.stat === "risefall") {
+        for (let i = 1; i < recentP.length; i++) {
+          if (recentP[i] > recentP[i-1]) leftCount++;
+          else if (recentP[i] < recentP[i-1]) rightCount++;
+        }
+        total = Math.max(1, leftCount + rightCount);
+      } else if (tile.stat === "matchdiffer") {
+        leftCount  = recent.filter(d => d === scanMatchDigit).length;
+        rightCount = recent.filter(d => d !== scanMatchDigit).length;
+      }
+
+      const leftPct  = +((leftCount  / total) * 100).toFixed(1);
+      const rightPct = +((rightCount / total) * 100).toFixed(1);
+      const thr = tile.threshold;
+      let signal = null;
+      if (leftPct  >= thr) signal = tile.tradeWhenOver;
+      else if (rightPct >= thr) signal = tile.tradeWhenUnder;
+
+      return { signal, leftPct, rightPct };
+    }
+
+    // Map a signal string to Deriv contract_type
+    function signalToContractType(signal) {
+      return { even:"DIGITEVEN", odd:"DIGITODD", over:"DIGITOVER", under:"DIGITUNDER", rise:"CALL", fall:"PUT", differ:"DIGITDIFF", match:"DIGITMATCH" }[signal] || null;
+    }
+
     const ROBOT_PRESETS = [
       { id:"ou18", name:"Over 1 / Under 8", desc:"Trades whichever edge setup appears first between Over 1 and Under 8.", tags:["Over 1","Under 8"], type:"overunder", prediction:"over", barrier:1, color:"#22c55e" },
       { id:"ou27", name:"Over 2 / Under 7", desc:"Combines the Over 2 and Under 7 edge triggers into one preset.", tags:["Over 2","Under 7"], type:"overunder", prediction:"over", barrier:2, color:"#22c55e" },
@@ -582,7 +744,7 @@
           e("span", { style:{fontSize:16,fontWeight:700} }, "TraderNova")
         ),
         e("div", { style:{display:"flex",flexDirection:"column",gap:2,padding:"20px 0",flex:1} },
-          [["market","◈","Markets"],["trade","⚡","Trade"],["charts","▲","Charts"],["scanner","◎","Scanner"],["robots","✦","AI Robots"],["bulk","▣","Bulk Trader"],["risk","⛨","Risk Calc"],["portfolio","▤","Portfolio"]].map(([key,icon,label]) =>
+          [["market","◈","Markets"],["trade","⚡","Trade"],["charts","▲","Charts"],["scanner","◎","Scanner"],["robots","✦","AI Robots"],["autotrader","⚙","Auto Trader"],["bulk","▣","Bulk Trader"],["risk","⛨","Risk Calc"],["portfolio","▤","Portfolio"]].map(([key,icon,label]) =>
             e("button", { key, style:navBtn(key), onClick:()=>setTab(key) },
               e("span", { style:{fontSize:18,width:24} }, icon),
               e("span", null, label)
@@ -992,6 +1154,151 @@
             ))
           )
         ),
+
+        tab === "autotrader" && (() => {
+          const STAT_LABELS = {
+            evenodd:    ["Even", "Odd"],
+            overunder:  ["Over", "Under"],
+            risefall:   ["Rise", "Fall"],
+          };
+
+          return e("div", { style:{padding:32,maxWidth:1200} },
+            e("h2", { style:{fontSize:22,fontWeight:700,margin:"0 0 8px",letterSpacing:-0.5} }, "Auto Trader"),
+            e("p", { style:{color:C.muted,fontSize:13,marginBottom:20} }, "Each bot watches live stats and fires a trade automatically when its condition is met. All bots share the Scanner's live feed — select a market in any bot to start."),
+
+            e("div", { style:{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:16} },
+              speedbots.map((bot, idx) => {
+                const digits = scanSym === bot.sym ? scanTicks : [];
+                const prices = scanSym === bot.sym ? scanPrices : [];
+                const { signal, leftPct, rightPct } = evalSpeedbot(bot, digits, prices);
+                const [leftLabel, rightLabel] = STAT_LABELS[bot.stat] || ["A","B"];
+                const statusColor = bot.running
+                  ? (bot.status === "in_trade" ? "#fb923c" : bot.status === "waiting" ? "#a78bfa" : C.green)
+                  : "#475569";
+                const statusText = bot.running
+                  ? (bot.status === "in_trade" ? "IN TRADE" : bot.status === "waiting" ? "QUOTING" : "WATCHING")
+                  : "STOPPED";
+
+                return e("div", { key:bot.id, style:{background:C.card,border:`1px solid ${bot.running?C.cyan:C.border}`,borderRadius:12,padding:18,display:"flex",flexDirection:"column",gap:12} },
+
+                  // Header
+                  e("div", { style:{display:"flex",justifyContent:"space-between",alignItems:"flex-start"} },
+                    e("div", null,
+                      e("div", { style:{fontSize:14,fontWeight:700,color:C.text} }, bot.title),
+                      e("div", { style:{display:"flex",alignItems:"center",gap:5,marginTop:3} },
+                        e("span", { style:{width:6,height:6,borderRadius:"50%",background:statusColor,display:"inline-block"} }),
+                        e("span", { style:{fontSize:10,color:statusColor,letterSpacing:1} }, statusText)
+                      )
+                    ),
+                    e("div", { style:{fontFamily:"monospace",fontSize:13,fontWeight:700,color:C.cyan} },
+                      bot.sym && ticks[bot.sym]?.length ? Number(ticks[bot.sym][ticks[bot.sym].length-1]).toFixed(2) : "—"
+                    )
+                  ),
+
+                  // Live digit strip
+                  e("div", { style:{display:"flex",gap:4,flexWrap:"wrap",minHeight:28} },
+                    digits.slice(-10).map((d,i,arr) => e("span", { key:i, style:{
+                      width:24,height:24,borderRadius:5,display:"flex",alignItems:"center",justifyContent:"center",
+                      fontSize:11,fontWeight:800,
+                      background: i===arr.length-1 ? C.cyan : "#0a1628",
+                      color: i===arr.length-1 ? "#060d1a" : C.sub,
+                    } }, d))
+                  ),
+
+                  // Stat bars
+                  e("div", { style:{display:"flex",flexDirection:"column",gap:6} },
+                    [
+                      [leftLabel,  leftPct,  C.green,   signal && [bot.stat==="evenodd"?"even":bot.stat==="risefall"?"rise":"over"].includes(signal)],
+                      [rightLabel, rightPct, "#f87171", signal && [bot.stat==="evenodd"?"odd":bot.stat==="risefall"?"fall":"under"].includes(signal)],
+                    ].map(([label,pct,color,active]) => e("div", { key:label, style:{display:"flex",alignItems:"center",gap:8} },
+                      e("span", { style:{width:42,fontSize:11,fontWeight:active?800:600,color:active?color:C.muted} }, label),
+                      e("div", { style:{flex:1,height:7,background:"#0a1628",borderRadius:4,overflow:"hidden"} },
+                        e("div", { style:{width:pct+"%",height:"100%",background:color,transition:"width 0.3s",opacity:active?1:0.5} })
+                      ),
+                      e("span", { style:{width:42,textAlign:"right",fontSize:11,fontFamily:"monospace",color:active?color:C.muted,fontWeight:active?800:400} }, pct+"%"),
+                      active && e("span", { style:{fontSize:9,color:color,fontWeight:800,letterSpacing:0.5} }, "▲")
+                    ))
+                  ),
+
+                  // Config row
+                  e("div", { style:{display:"flex",gap:8,opacity:bot.running?0.5:1,pointerEvents:bot.running?"none":"auto"} },
+                    e("div", { style:{flex:2} },
+                      e("label", { style:{fontSize:9,color:C.muted,letterSpacing:1,display:"block",marginBottom:3} }, "MARKET"),
+                      e("select", { style:{...fieldStyle,fontSize:11,padding:"5px 8px"}, value:bot.sym||"",
+                        onChange:ev => {
+                          const sym = ev.target.value;
+                          setSpeedbots(prev => prev.map((b,i) => i===idx ? {...b, sym} : b));
+                          startScan(sym);
+                          pubWs.send({ ticks: sym, subscribe: 1 });
+                        }
+                      },
+                        e("option", { value:"" }, "Select..."),
+                        symbols.map(s => e("option", { key:s.symbol, value:s.symbol }, s.display_name))
+                      )
+                    ),
+                    e("div", { style:{flex:1} },
+                      e("label", { style:{fontSize:9,color:C.muted,letterSpacing:1,display:"block",marginBottom:3} }, "STAKE"),
+                      e("input", { style:{...fieldStyle,fontSize:11,padding:"5px 8px"}, type:"number", min:0.35, step:0.01, value:bot.stake,
+                        onChange:ev => setSpeedbots(prev => prev.map((b,i) => i===idx ? {...b, stake:ev.target.value, currentStake:parseFloat(ev.target.value)||0.5} : b))
+                      })
+                    ),
+                    e("div", { style:{flex:1} },
+                      e("label", { style:{fontSize:9,color:C.muted,letterSpacing:1,display:"block",marginBottom:3} }, "WINDOW"),
+                      e("input", { style:{...fieldStyle,fontSize:11,padding:"5px 8px"}, type:"number", min:3, max:100, value:bot.ticksWindow,
+                        onChange:ev => setSpeedbots(prev => prev.map((b,i) => i===idx ? {...b, ticksWindow:parseInt(ev.target.value)||5} : b))
+                      })
+                    )
+                  ),
+
+                  e("div", { style:{display:"flex",gap:8,opacity:bot.running?0.5:1,pointerEvents:bot.running?"none":"auto"} },
+                    e("div", { style:{flex:1} },
+                      e("label", { style:{fontSize:9,color:C.muted,letterSpacing:1,display:"block",marginBottom:3} }, "THRESHOLD %"),
+                      e("input", { style:{...fieldStyle,fontSize:11,padding:"5px 8px"}, type:"number", min:51, max:99, value:bot.threshold,
+                        onChange:ev => setSpeedbots(prev => prev.map((b,i) => i===idx ? {...b, threshold:parseInt(ev.target.value)||60} : b))
+                      })
+                    ),
+                    e("div", { style:{flex:1} },
+                      e("label", { style:{fontSize:9,color:C.muted,letterSpacing:1,display:"block",marginBottom:3} }, "MARTINGALE ×"),
+                      e("input", { style:{...fieldStyle,fontSize:11,padding:"5px 8px"}, type:"number", min:1, step:0.1, value:bot.multiplier,
+                        onChange:ev => setSpeedbots(prev => prev.map((b,i) => i===idx ? {...b, multiplier:ev.target.value} : b))
+                      })
+                    )
+                  ),
+
+                  // P/L and button
+                  e("div", { style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:4} },
+                    e("div", null,
+                      e("div", { style:{fontSize:10,color:C.muted,letterSpacing:1} }, "SESSION P/L"),
+                      e("div", { style:{fontSize:16,fontFamily:"monospace",fontWeight:800,color:bot.pl>0?C.green:bot.pl<0?"#f87171":C.text} },
+                        (bot.pl>=0?"+":"")+"$"+bot.pl.toFixed(2)
+                      ),
+                      e("div", { style:{fontSize:10,color:"#475569"} }, bot.trades+" trades")
+                    ),
+                    e("button", {
+                      style:{
+                        background: bot.running ? "#f87171" : C.cyan,
+                        color: bot.running ? "#1f0a0a" : "#060d1a",
+                        border:"none", borderRadius:8, padding:"8px 16px",
+                        fontSize:12, fontWeight:700, cursor: bot.sym ? "pointer" : "not-allowed",
+                        opacity: !bot.sym && !bot.running ? 0.4 : 1,
+                      },
+                      disabled: !bot.sym && !bot.running,
+                      onClick: () => {
+                        if (!bot.sym) return;
+                        if (!bot.running) {
+                          startScan(bot.sym);
+                          setSpeedbots(prev => prev.map((b,i) => i===idx ? {...b, running:true, status:"idle", pl:0, trades:0, currentStake:parseFloat(bot.stake)||0.5} : b));
+                        } else {
+                          setSpeedbots(prev => prev.map((b,i) => i===idx ? {...b, running:false, status:"idle"} : b));
+                        }
+                      }
+                    }, bot.running ? "■ Stop" : "▶ Start")
+                  )
+                );
+              })
+            )
+          );
+        })(),
 
         tab === "robotrun" && activeRobot && (() => {
           const isOU = activeRobot.type === "overunder";
