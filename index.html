@@ -180,8 +180,6 @@
     const [portfolio, setPortfolio] = useState([]);
     const [tab, setTab]             = useState("dashboard");    const [toast, setToast]         = useState(null);
     const propIdRef = useRef(null);
-    const botTradesRef = useRef([]);
-    useEffect(() => { botTradesRef.current = botTrades; }, [botTrades]);
     const pendingBuyRef = useRef(false);
 
     // Scanner state
@@ -252,6 +250,8 @@
     const [botPL, setBotPL]             = useState(0);
     const [botStake, setBotStake]       = useState(1);
     const [botTrades, setBotTrades]     = useState([]); // {time, stake, result, profit, contractId}
+    const botTradesRef = useRef([]);
+    useEffect(() => { botTradesRef.current = botTrades; }, [botTrades]);
     const [botStatus, setBotStatus]     = useState("idle"); // idle | waiting_proposal | in_trade
     const botRunningRef = useRef(false);
     const botStateRef   = useRef({}); // holds latest bot config + running totals for closures
