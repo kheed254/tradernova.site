@@ -818,8 +818,8 @@
           // Stats row
           e("div", { style:{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:16,marginBottom:28} },
             [
-              { label:"Session Trades", value: botTrades.length + speedbots.reduce((s,b)=>s+b.tradeLog.length,0), color:C.text },
-              { label:"Session Wins", value: botTrades.filter(t=>t.won).length + speedbots.reduce((s,b)=>s+b.tradeLog.filter(t=>t.won).length,0), color:C.green },
+              { label:"Session Trades", value: botTrades.length + speedbots.reduce((s,b)=>s+(b.trades||0),0), color:C.text },
+              { label:"Session Wins", value: botTrades.filter(t=>t.won).length, color:C.green },
               { label:"Bulk Bot P/L", value: (botPL>=0?"+":"")+"$"+botPL.toFixed(2), color:botPL>=0?C.green:"#f87171" },
               { label:"Sessions Saved", value: sessionHistory.length, color:C.cyan },
             ].map(({label,value,color}) =>
