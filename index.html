@@ -891,40 +891,59 @@
         ),
 
         // ── REPORTS TAB ────────────────────────────────────────────────────────
-        tab === "reports" && e("div", { style:{padding:32,maxWidth:900} },
+        tab === "reports" && e("div", { style:{padding:32,maxWidth:1000} },
           e("div", { style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:24} },
-            e("h2", { style:{fontSize:22,fontWeight:700,margin:0,letterSpacing:-0.5} }, "Reports"),
+            e("h2", { style:{fontSize:22,fontWeight:700,margin:0,letterSpacing:-0.5} }, "Trade History & Reports"),
             sessionHistory.length > 0 && e("button", { style:{background:"none",border:`1px solid ${C.border}`,color:"#f87171",borderRadius:8,padding:"6px 14px",fontSize:12,cursor:"pointer"}, onClick:()=>setSessionHistory([]) }, "Clear history")
           ),
 
           sessionHistory.length === 0
             ? e("div", { style:{background:C.card,border:`1px dashed ${C.border}`,borderRadius:12,padding:48,textAlign:"center"} },
                 e("div", { style:{fontSize:40,marginBottom:12} }, "▦"),
-                e("p", { style:{color:"#475569",fontSize:14} }, "No sessions recorded yet. Run any bot and stop it to save a session here.")
+                e("p", { style:{color:"#475569",fontSize:14,marginBottom:8} }, "No sessions recorded yet."),
+                e("p", { style:{color:"#334155",fontSize:13} }, "Run any bot from Bulk Trader or AI Robots and stop it — results will appear here automatically.")
               )
             : e(React.Fragment, null,
 
-                // Cumulative P/L over sessions
+                // Cumulative P/L chart with gradient
                 (() => {
                   const sessions = [...sessionHistory].reverse();
-                  const cumPL = sessions.reduce((acc, s, i) => [...acc, (acc[i-1]||0) + s.pl], []);
+                  const cumPL = sessions.reduce((acc,s,i) => [...acc, (acc[i-1]||0)+s.pl], []);
                   const maxAbs = Math.max(1, ...cumPL.map(Math.abs));
-                  const W = 800, H = 120, pad = 20;
-                  const plotW = W - pad*2, plotH = H - pad*2;
-                  const pts = cumPL.map((v,i) => {
-                    const x = pad + (i/(Math.max(cumPL.length-1,1)))*plotW;
-                    const y = pad + plotH/2 - (v/maxAbs)*(plotH/2);
-                    return `${x},${y}`;
-                  }).join(" ");
-                  const lastPL = cumPL[cumPL.length-1] || 0;
+                  const W=800, H=140, pad=24;
+                  const plotW=W-pad*2, plotH=H-pad*2;
+                  const yZero = pad+plotH/2;
+                  const xFor = i => pad+(i/Math.max(cumPL.length-1,1))*plotW;
+                  const yFor = v => pad+plotH/2-(v/maxAbs)*(plotH/2);
+                  const pts = cumPL.map((v,i)=>`${xFor(i)},${yFor(v)}`).join(" ");
+                  const lastPL = cumPL[cumPL.length-1]||0;
+                  const lineColor = lastPL>=0?C.green:"#f87171";
+                  const fillPts = cumPL.length>=2
+                    ? pts+` ${xFor(cumPL.length-1)},${yZero} ${xFor(0)},${yZero}`
+                    : "";
                   return e("div", { style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:20,marginBottom:20} },
-                    e("div", { style:{display:"flex",justifyContent:"space-between",marginBottom:12} },
-                      e("div", { style:{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:1} }, "CUMULATIVE P/L"),
-                      e("div", { style:{fontSize:18,fontFamily:"monospace",fontWeight:800,color:lastPL>=0?C.green:"#f87171"} }, (lastPL>=0?"+":"")+"$"+lastPL.toFixed(2))
+                    e("div", { style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14} },
+                      e("div", null,
+                        e("div", { style:{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:1} }, "CUMULATIVE P/L"),
+                        e("div", { style:{fontSize:11,color:"#475569",marginTop:2} }, sessionHistory.length+" sessions recorded")
+                      ),
+                      e("div", { style:{textAlign:"right"} },
+                        e("div", { style:{fontSize:24,fontFamily:"monospace",fontWeight:800,color:lastPL>=0?C.green:"#f87171"} }, (lastPL>=0?"+":"")+"$"+lastPL.toFixed(2)),
+                        e("div", { style:{fontSize:11,color:"#475569"} }, "all time")
+                      )
                     ),
-                    cumPL.length >= 2 && e("svg", { width:"100%", height:H, viewBox:`0 0 ${W} ${H}`, style:{display:"block"} },
-                      e("line", { x1:pad, y1:pad+plotH/2, x2:W-pad, y2:pad+plotH/2, stroke:"#1e293b", strokeWidth:1, strokeDasharray:"4" }),
-                      e("polyline", { points:pts, fill:"none", stroke:lastPL>=0?C.green:"#f87171", strokeWidth:2, strokeLinejoin:"round" })
+                    cumPL.length>=2 && e("svg", { width:"100%", height:H, viewBox:`0 0 ${W} ${H}`, style:{display:"block"} },
+                      e("defs", null,
+                        e("linearGradient", { id:"plGrad", x1:"0", y1:"0", x2:"0", y2:"1" },
+                          e("stop", { offset:"0%", stopColor:lineColor, stopOpacity:"0.3" }),
+                          e("stop", { offset:"100%", stopColor:lineColor, stopOpacity:"0" })
+                        )
+                      ),
+                      e("line", { x1:pad, y1:yZero, x2:W-pad, y2:yZero, stroke:"#1e293b", strokeWidth:1, strokeDasharray:"4" }),
+                      fillPts && e("polygon", { points:fillPts, fill:"url(#plGrad)" }),
+                      e("polyline", { points:pts, fill:"none", stroke:lineColor, strokeWidth:2, strokeLinejoin:"round" }),
+                      // Dot on last point
+                      cumPL.length>=1 && e("circle", { cx:xFor(cumPL.length-1), cy:yFor(lastPL), r:4, fill:lineColor })
                     )
                   );
                 })(),
@@ -934,18 +953,38 @@
                   const totalPL = sessionHistory.reduce((s,r)=>s+r.pl,0);
                   const totalTrades = sessionHistory.reduce((s,r)=>s+r.trades,0);
                   const totalWon = sessionHistory.reduce((s,r)=>s+r.won,0);
-                  const winRate = totalTrades ? ((totalWon/totalTrades)*100).toFixed(1) : "0.0";
+                  const winRate = totalTrades?((totalWon/totalTrades)*100).toFixed(1):"0.0";
                   const profitable = sessionHistory.filter(s=>s.pl>0).length;
-                  return e("div", { style:{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:16,marginBottom:20} },
-                    [
-                      { label:"Total P/L", value:(totalPL>=0?"+":"")+"$"+totalPL.toFixed(2), color:totalPL>=0?C.green:"#f87171" },
-                      { label:"Win Rate", value:winRate+"%", color:parseFloat(winRate)>=50?C.green:"#f87171" },
-                      { label:"Total Trades", value:totalTrades, color:C.text },
-                      { label:"Profitable Sessions", value:profitable+"/"+sessionHistory.length, color:C.cyan },
-                    ].map(({label,value,color}) =>
-                      e("div", { key:label, style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px"} },
-                        e("div", { style:{fontSize:10,color:C.muted,letterSpacing:1,marginBottom:6} }, label.toUpperCase()),
-                        e("div", { style:{fontSize:18,fontFamily:"monospace",fontWeight:700,color} }, value)
+                  const bestSession = sessionHistory.reduce((best,s)=>s.pl>best.pl?s:best, sessionHistory[0]);
+                  const worstSession = sessionHistory.reduce((worst,s)=>s.pl<worst.pl?s:worst, sessionHistory[0]);
+                  return e(React.Fragment, null,
+                    e("div", { style:{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:14,marginBottom:14} },
+                      [
+                        { label:"Total P/L", value:(totalPL>=0?"+":"")+"$"+totalPL.toFixed(2), color:totalPL>=0?C.green:"#f87171" },
+                        { label:"Overall Win Rate", value:winRate+"%", color:parseFloat(winRate)>=50?C.green:"#f87171" },
+                        { label:"Total Trades", value:totalTrades, color:C.text },
+                        { label:"Profitable Sessions", value:`${profitable}/${sessionHistory.length}`, color:C.cyan },
+                      ].map(({label,value,color})=>
+                        e("div", { key:label, style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px"} },
+                          e("div", { style:{fontSize:10,color:C.muted,letterSpacing:1,marginBottom:6} }, label.toUpperCase()),
+                          e("div", { style:{fontSize:18,fontFamily:"monospace",fontWeight:700,color} }, value)
+                        )
+                      )
+                    ),
+                    e("div", { style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:20} },
+                      e("div", { style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"12px 16px",display:"flex",justifyContent:"space-between",alignItems:"center"} },
+                        e("div", null,
+                          e("div", { style:{fontSize:10,color:C.muted,letterSpacing:1,marginBottom:4} }, "BEST SESSION"),
+                          e("div", { style:{fontSize:12,color:C.sub} }, bestSession.strategy+" • "+bestSession.trades+" trades")
+                        ),
+                        e("div", { style:{fontSize:16,fontFamily:"monospace",fontWeight:700,color:C.green} }, "+$"+bestSession.pl.toFixed(2))
+                      ),
+                      e("div", { style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"12px 16px",display:"flex",justifyContent:"space-between",alignItems:"center"} },
+                        e("div", null,
+                          e("div", { style:{fontSize:10,color:C.muted,letterSpacing:1,marginBottom:4} }, "WORST SESSION"),
+                          e("div", { style:{fontSize:12,color:C.sub} }, worstSession.strategy+" • "+worstSession.trades+" trades")
+                        ),
+                        e("div", { style:{fontSize:16,fontFamily:"monospace",fontWeight:700,color:"#f87171"} }, (worstSession.pl>=0?"+":"")+"$"+worstSession.pl.toFixed(2))
                       )
                     )
                   );
@@ -953,15 +992,19 @@
 
                 // Session list
                 e("div", { style:{border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden"} },
-                  e("div", { style:{display:"grid",gridTemplateColumns:"2fr 1fr 1fr 1fr 1fr",padding:"10px 20px",background:"#0a1628",fontSize:11,fontWeight:700,color:"#475569",letterSpacing:1,textTransform:"uppercase",borderBottom:`1px solid ${C.border}`} },
-                    ["Time","Strategy","Trades","Win Rate","P/L"].map(h=>e("span",{key:h},h))
+                  e("div", { style:{display:"grid",gridTemplateColumns:"2fr 1fr 1fr 1fr 1fr 1fr",padding:"10px 20px",background:"#0a1628",fontSize:11,fontWeight:700,color:"#475569",letterSpacing:1,textTransform:"uppercase",borderBottom:`1px solid ${C.border}`} },
+                    ["Time","Strategy","Market","Trades","Win %","P/L"].map(h=>e("span",{key:h},h))
                   ),
                   sessionHistory.map(s =>
-                    e("div", { key:s.id, style:{display:"grid",gridTemplateColumns:"2fr 1fr 1fr 1fr 1fr",padding:"12px 20px",fontSize:13,color:C.sub,borderBottom:`1px solid #0f172a`,alignItems:"center"} },
-                      e("span", { style:{fontSize:12} }, s.time),
+                    e("div", { key:s.id, style:{display:"grid",gridTemplateColumns:"2fr 1fr 1fr 1fr 1fr 1fr",padding:"12px 20px",fontSize:13,color:C.sub,borderBottom:`1px solid #0f172a`,alignItems:"center"} },
+                      e("div", null,
+                        e("div", { style:{fontSize:12} }, s.time),
+                        s.reason && e("div", { style:{fontSize:10,color:s.reason==="Take-profit"?C.green:s.reason==="Stop-loss"?"#f87171":"#475569",marginTop:2} }, s.reason)
+                      ),
                       e("span", { style:{color:C.text,fontWeight:600} }, s.strategy),
+                      e("span", { style:{fontSize:11} }, s.sym||"—"),
                       e("span", null, s.trades),
-                      e("span", null, s.trades ? ((s.won/s.trades)*100).toFixed(0)+"%" : "—"),
+                      e("span", { style:{color:s.trades&&(s.won/s.trades)>=0.5?C.green:"#f87171"} }, s.trades?((s.won/s.trades)*100).toFixed(0)+"%":"—"),
                       e("span", { style:{fontFamily:"monospace",fontWeight:700,color:s.pl>=0?C.green:"#f87171"} }, (s.pl>=0?"+":"")+"$"+s.pl.toFixed(2))
                     )
                   )
