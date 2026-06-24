@@ -87,23 +87,20 @@
     return data; // { access_token, expires_in, token_type }
   }
 
-  async function getAccountId(accessToken) {
+  async function getAllAccounts(accessToken) {
     const headers = {
       "Authorization": `Bearer ${accessToken}`,
       "Deriv-App-ID": APP_ID,
     };
 
-    // 1. Try to list existing accounts
     const listRes = await fetch("https://api.derivws.com/trading/v1/options/accounts", {
-      method: "GET",
-      headers,
+      method: "GET", headers,
     });
     const listJson = await listRes.json();
     if (!listRes.ok) throw new Error((listJson.errors && listJson.errors[0]?.message) || "Failed to fetch accounts");
 
     let accounts = Array.isArray(listJson.data) ? listJson.data : (listJson.data ? [listJson.data] : []);
 
-    // 2. If no accounts exist yet, create a demo account
     if (!accounts.length) {
       const createRes = await fetch("https://api.derivws.com/trading/v1/options/accounts", {
         method: "POST",
@@ -116,8 +113,7 @@
     }
 
     if (!accounts.length) throw new Error("No trading accounts found on this profile");
-    const demo = accounts.find(a => a.account_type === "demo") || accounts[0];
-    return demo.account_id;
+    return accounts; // return ALL accounts
   }
 
   async function fetchOTPViaBackend(accountId, accessToken) {
@@ -147,7 +143,8 @@
     }, [url]);
     const send = useCallback((data) => { if (wsRef.current?.readyState === 1) wsRef.current.send(JSON.stringify(data)); }, []);
     useEffect(() => () => wsRef.current?.close(), []);
-    return { connect, send };
+    const disconnect = useCallback(() => { wsRef.current?.close(); wsRef.current = null; }, []);
+    return { connect, send, disconnect };
   }
 
   function Sparkline({ ticks, color }) {
@@ -161,8 +158,13 @@
   }
 
   function App() {
-    const [authState, setAuthState] = useState("idle"); // idle|loading|authed|error
+    const [authState, setAuthState] = useState("idle");
     const [authError, setAuthError] = useState(null);
+    const [accounts, setAccounts] = useState([]); // all available accounts
+    const [activeAccount, setActiveAccount] = useState(null); // currently selected account
+    const [switchingAccount, setSwitchingAccount] = useState(false);
+    const [realWarningPending, setRealWarningPending] = useState(null); // account to switch to after confirmation
+    const accessTokenRef = useRef(null); // stored for account switching
     const [symbols, setSymbols]     = useState([]);
     const [selSym, setSelSym]       = useState(null);
     const [contracts, setContracts] = useState([]);
@@ -582,8 +584,13 @@
         .then(async (tokenData) => {
           sessionStorage.removeItem("pkce_code_verifier");
           sessionStorage.removeItem("oauth_state");
-          const accountId = await getAccountId(tokenData.access_token);
-          const otp = await fetchOTPViaBackend(accountId, tokenData.access_token);
+          accessTokenRef.current = tokenData.access_token;
+          const allAccounts = await getAllAccounts(tokenData.access_token);
+          setAccounts(allAccounts);
+          // Default to demo account
+          const demo = allAccounts.find(a => a.account_type === "demo") || allAccounts[0];
+          setActiveAccount(demo);
+          const otp = await fetchOTPViaBackend(demo.account_id, tokenData.access_token);
           setAuthState("authed");
           return otp.ws_url;
         })
@@ -687,6 +694,32 @@
       setTab("robotrun");
     }
 
+    async function doSwitchAccount(account) {
+      if (!accessTokenRef.current) return;
+      setSwitchingAccount(true);
+      setRealWarningPending(null);
+      try {
+        authWs.disconnect?.();
+        setBalance(null);
+        setPortfolio([]);
+        const otp = await fetchOTPViaBackend(account.account_id, accessTokenRef.current);
+        setActiveAccount(account);
+        authWs.connect(otp.ws_url);
+      } catch(err) {
+        showToast("Failed to switch account: "+err.message, false);
+      } finally {
+        setSwitchingAccount(false);
+      }
+    }
+
+    function requestSwitchAccount(account) {
+      if (account.account_type === "real") {
+        setRealWarningPending(account); // show warning modal first
+      } else {
+        doSwitchAccount(account);
+      }
+    }
+
     function requestStartBot() {
       if (!botSym) { showToast("Select a market for the bot first", false); return; }
       setBotConfirming(true);
@@ -778,14 +811,28 @@
         ),
         e("div", { style:{padding:"16px",borderTop:"1px solid #0f172a"} },
           authState === "authed"
-            ? e("div", { style:{background:"#0a1628",border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 12px"} },
-                e("div", { style:{display:"flex",alignItems:"center",gap:6,marginBottom:6} },
-                  e("span", { style:{width:7,height:7,borderRadius:"50%",background:C.green,display:"inline-block"} }),
-                  e("span", { style:{color:C.sub,fontSize:11} }, "Demo Account")
+            ? e("div", null,
+                // Demo/Real toggle tabs
+                accounts.length > 1 && e("div", { style:{display:"flex",background:"#060d1a",borderRadius:8,padding:2,marginBottom:10,border:`1px solid ${C.border}`} },
+                  ["demo","real"].map(type => {
+                    const acct = accounts.find(a=>a.account_type===type);
+                    if (!acct) return null;
+                    const active = activeAccount?.account_type === type;
+                    return e("button", { key:type, style:{flex:1,padding:"6px",borderRadius:6,border:"none",background:active?(type==="real"?"#7f1d1d":"#0f172a"):"transparent",color:active?(type==="real"?"#fca5a5":C.cyan):C.muted,fontSize:11,fontWeight:700,cursor:"pointer",letterSpacing:0.5}, onClick:()=>requestSwitchAccount(acct) },
+                      type === "real" ? "⚠ REAL" : "DEMO"
+                    );
+                  })
                 ),
-                e("div", { style:{color:C.muted,fontSize:11,letterSpacing:1} }, "BALANCE"),
-                e("div", { style:{color:C.text,fontSize:20,fontFamily:"monospace",fontWeight:700} }, "$"+fmtMoney(balance?.balance ?? balance?.amount ?? balance?.value)),
-                e("div", { style:{color:C.muted,fontSize:11} }, balance?.currency||"USD")
+                // Balance display
+                e("div", { style:{background: activeAccount?.account_type==="real"?"#1c0a0a":"#0a1628", border:`1px solid ${activeAccount?.account_type==="real"?"#7f1d1d":C.border}`,borderRadius:8,padding:"10px 12px"} },
+                  e("div", { style:{display:"flex",alignItems:"center",gap:6,marginBottom:6} },
+                    e("span", { style:{width:7,height:7,borderRadius:"50%",background:activeAccount?.account_type==="real"?"#f87171":C.green,display:"inline-block"} }),
+                    e("span", { style:{color:activeAccount?.account_type==="real"?"#fca5a5":C.sub,fontSize:11,fontWeight:600} }, switchingAccount?"Switching…":(activeAccount?.account_type==="real"?"⚠ REAL MONEY":"Demo Account"))
+                  ),
+                  e("div", { style:{color:C.muted,fontSize:11,letterSpacing:1} }, "BALANCE"),
+                  e("div", { style:{color:C.text,fontSize:20,fontFamily:"monospace",fontWeight:700} }, "$"+fmtMoney(balance?.balance ?? balance?.amount ?? balance?.value)),
+                  e("div", { style:{color:C.muted,fontSize:11} }, balance?.currency||"USD")
+                )
               )
             : authState === "loading"
               ? e("div", { style:{color:C.muted,fontSize:12,textAlign:"center"} }, "Authenticating…")
@@ -1950,6 +1997,20 @@
       ),
 
       toast && e("div", { style:{position:"fixed",bottom:24,right:24,padding:"14px 20px",borderRadius:10,border:"1px solid",fontSize:13,fontWeight:600,maxWidth:360,zIndex:1000,boxShadow:"0 8px 32px rgba(0,0,0,0.5)",background:toast.ok?"#052e16":"#1f0a0a",borderColor:toast.ok?C.green:C.red,color:toast.ok?C.green:C.red} }, toast.msg),
+
+      // ── Real money account switch warning ──
+      realWarningPending && e("div", { style:{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:3000} },
+        e("div", { style:{background:"#1c0a0a",border:"2px solid #f87171",borderRadius:14,padding:28,maxWidth:400} },
+          e("div", { style:{fontSize:28,marginBottom:12,textAlign:"center"} }, "⚠️"),
+          e("h3", { style:{fontSize:17,fontWeight:700,marginBottom:10,color:"#fca5a5",textAlign:"center"} }, "Switch to Real Money?"),
+          e("p", { style:{color:"#fca5a5",fontSize:13,lineHeight:1.7,marginBottom:8} }, "You are about to switch to your REAL money account."),
+          e("p", { style:{color:"#f87171",fontSize:13,lineHeight:1.7,marginBottom:20,fontWeight:600} }, "All bot trades, manual trades, and automated strategies will use REAL funds. Losses are permanent and cannot be reversed."),
+          e("div", { style:{display:"flex",gap:10} },
+            e("button", { style:{flex:1,padding:"11px",borderRadius:8,border:"1px solid #475569",background:"transparent",color:C.sub,fontSize:13,fontWeight:600,cursor:"pointer"}, onClick:()=>setRealWarningPending(null) }, "Cancel — stay on Demo"),
+            e("button", { style:{flex:1,padding:"11px",borderRadius:8,border:"none",background:"#f87171",color:"#1f0a0a",fontSize:13,fontWeight:700,cursor:"pointer"}, onClick:()=>doSwitchAccount(realWarningPending) }, "I understand — switch to Real")
+          )
+        )
+      ),
 
       // ── Bot start confirmation modal (top-level so it works from Bulk Trader or any AI Robot run screen) ──
       botConfirming && e("div", { style:{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:2000} },
