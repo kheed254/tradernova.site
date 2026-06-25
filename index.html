@@ -180,7 +180,11 @@
     const [buyLoading, setBuyLoading] = useState(false);
     const [balance, setBalance]     = useState(null);
     const [portfolio, setPortfolio] = useState([]);
-    const [tab, setTab]             = useState("dashboard");    const [toast, setToast]         = useState(null);
+    const [tab, setTab]             = useState("dashboard");
+    const [splash, setSplash]       = useState(true);
+    const [splashProgress, setSplashProgress] = useState(0);
+    const [splashStep, setSplashStep] = useState(0);
+    const [toast, setToast]         = useState(null);
     const propIdRef = useRef(null);
     const pendingBuyRef = useRef(false);
 
@@ -556,6 +560,31 @@
       return () => clearTimeout(timeoutId);
     }, [botRunning, botStatus]);
 
+    // Splash screen animation
+    const SPLASH_STEPS = [
+      "Connecting to Volatility Markets...",
+      "Loading market data feeds...",
+      "Initializing trading engine...",
+      "Preparing your dashboard...",
+      "Ready!",
+    ];
+    useEffect(() => {
+      let progress = 0;
+      let step = 0;
+      const interval = setInterval(() => {
+        progress += 4 + Math.random() * 8;
+        if (progress > 100) progress = 100;
+        setSplashProgress(Math.round(progress));
+        const newStep = Math.min(Math.floor((progress / 100) * SPLASH_STEPS.length), SPLASH_STEPS.length - 1);
+        if (newStep !== step) { step = newStep; setSplashStep(newStep); }
+        if (progress >= 100) {
+          clearInterval(interval);
+          setTimeout(() => setSplash(false), 600);
+        }
+      }, 120);
+      return () => clearInterval(interval);
+    }, []);
+
     // Connect to public market data on load
     useEffect(() => { pubWs.connect(); }, []);
 
@@ -793,6 +822,99 @@
     });
 
     const fieldStyle = { background:"#0a1628", border:`1px solid ${C.border}`, borderRadius:8, color:C.text, padding:"9px 12px", fontSize:14, width:"100%", outline:"none" };
+
+    // ── Splash screen ──
+    if (splash) {
+      const steps = ["Connecting to Volatility Markets...","Loading market data feeds...","Initializing trading engine...","Preparing your dashboard...","Ready!"];
+      return e("div", { style:{
+        position:"fixed",inset:0,background:"#060d1a",
+        display:"flex",alignItems:"center",justifyContent:"center",
+        flexDirection:"column",zIndex:9999,
+      } },
+        // Candlestick background decorations
+        e("div", { style:{position:"absolute",inset:0,overflow:"hidden",opacity:0.15,pointerEvents:"none"} },
+          [[-120,80,60],[-60,200,40],[100,60,80],[200,150,50],[300,80,70],[400,180,45],[500,100,60],[600,140,55],[700,70,75],[800,160,40],[900,90,65],[1000,130,50],[1100,80,70],[1150,200,45]].map(([x,y,h],i) => {
+            const up = i%2===0;
+            return e("div", { key:i, style:{position:"absolute",left:x,top:y} },
+              e("div", { style:{width:2,height:h*0.3,background:up?"#22c55e":"#f87171",margin:"0 auto"} }),
+              e("div", { style:{width:24,height:h,background:up?"#22c55e":"#f87171",borderRadius:2} }),
+              e("div", { style:{width:2,height:h*0.3,background:up?"#22c55e":"#f87171",margin:"0 auto"} })
+            );
+          })
+        ),
+
+        // Main card
+        e("div", { style:{
+          background:"rgba(13,21,38,0.95)",border:"1px solid #1e293b",
+          borderRadius:20,padding:"48px 56px",maxWidth:480,width:"90%",
+          textAlign:"center",backdropFilter:"blur(20px)",
+          boxShadow:"0 25px 80px rgba(0,0,0,0.6)",
+        } },
+          // Logo
+          e("div", { style:{marginBottom:8} },
+            e("span", { style:{fontSize:42,fontWeight:900,letterSpacing:-2} },
+              e("span",{style:{color:"#22d3ee"}},"TRADER"),
+              e("span",{style:{color:"#f87171"}},"NOVA")
+            )
+          ),
+          e("div", { style:{fontSize:12,letterSpacing:4,color:C.muted,marginBottom:4} }, "TRADING HUB"),
+          e("div", { style:{display:"inline-flex",alignItems:"center",gap:6,background:"#052e16",border:"1px solid #22c55e",borderRadius:20,padding:"3px 12px",marginBottom:32} },
+            e("span",{style:{width:6,height:6,borderRadius:"50%",background:"#22c55e",display:"inline-block"}}),
+            e("span",{style:{color:"#22c55e",fontSize:11,fontWeight:700,letterSpacing:1}},"LIVE")
+          ),
+
+          e("div", { style:{fontSize:20,fontWeight:700,color:C.text,marginBottom:6} }, "Welcome to TraderNova"),
+          e("div", { style:{fontSize:13,color:C.muted,marginBottom:28} }, "Empowering your financial journey."),
+
+          // Progress bar
+          e("div", { style:{background:"#0a1628",borderRadius:8,height:8,marginBottom:12,overflow:"hidden"} },
+            e("div", { style:{
+              height:"100%",borderRadius:8,
+              background:"linear-gradient(90deg, #22d3ee, #22c55e)",
+              width:splashProgress+"%",
+              transition:"width 0.15s ease",
+            } })
+          ),
+          e("div", { style:{display:"flex",justifyContent:"space-between",marginBottom:24} },
+            e("div", { style:{display:"flex",alignItems:"center",gap:8,color:C.muted,fontSize:12} },
+              splashProgress < 100 && e("div", { style:{width:14,height:14,border:"2px solid #22d3ee",borderTopColor:"transparent",borderRadius:"50%",animation:"spin 0.8s linear infinite"} }),
+              e("span", null, steps[splashStep])
+            ),
+            e("span", { style:{color:C.muted,fontSize:12} }, splashProgress+"%")
+          ),
+
+          // Step dots
+          e("div", { style:{display:"flex",justifyContent:"center",gap:8,marginBottom:36} },
+            steps.map((_,i) => e("div", { key:i, style:{width:i<=splashStep?24:8,height:8,borderRadius:4,background:i<=splashStep?"#22d3ee":"#1e293b",transition:"all 0.3s"} }))
+          ),
+
+          // Feature icons
+          e("div", { style:{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:20} },
+            [
+              { icon:"▲", label:"Advanced Charts" },
+              { icon:"▣", label:"Trading Bots" },
+              { icon:"◎", label:"Signal Scanner" },
+            ].map(({icon,label}) =>
+              e("div", { key:label, style:{textAlign:"center"} },
+                e("div", { style:{width:48,height:48,borderRadius:"50%",background:"#0a1628",border:"1px solid #1e293b",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,margin:"0 auto 8px"} }, icon),
+                e("div", { style:{fontSize:11,color:C.muted} }, label)
+              )
+            )
+          ),
+
+          e("div", { style:{marginTop:24,fontSize:12,color:"#334155",fontStyle:"italic"} }, "Preparing a seamless trading experience for you.")
+        ),
+
+        // Live ticker bar at bottom
+        e("div", { style:{position:"absolute",bottom:0,left:0,right:0,background:"rgba(6,13,26,0.9)",borderTop:"1px solid #1e293b",padding:"8px 20px",display:"flex",gap:20,overflow:"hidden"} },
+          ["AUD/USD","EUR/USD","GBP/USD","BTC/USD","ETH/USD","Volatility 10","Volatility 25","Boom 1000","Crash 1000"].map(s =>
+            e("span", { key:s, style:{color:C.muted,fontSize:11,whiteSpace:"nowrap"} }, s+" ●")
+          )
+        ),
+
+        e("style", null, "@keyframes spin { to { transform: rotate(360deg); } }")
+      );
+    }
 
     return e("div", { style:{display:"flex",height:"100vh",overflow:"hidden",background:C.bg} },
 
