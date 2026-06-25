@@ -796,7 +796,7 @@
 
     return e("div", { style:{display:"flex",height:"100vh",overflow:"hidden",background:C.bg} },
 
-      e("aside", { style:{width:220,background:C.sidebar,borderRight:`1px solid #0f172a`,display:"flex",flexDirection:"column",padding:"24px 0 16px",flexShrink:0} },
+      e("aside", { style:{width:220,background:C.sidebar,borderRight:`1px solid #0f172a`,display:"flex",flexDirection:"column",padding:"24px 0 16px",flexShrink:0,overflowY:"auto",height:"100vh"} },
         e("div", { style:{display:"flex",alignItems:"center",gap:10,padding:"0 20px 24px",borderBottom:"1px solid #0f172a"} },
           e("span", { style:{background:C.cyan,color:"#060d1a",fontWeight:900,fontSize:14,borderRadius:6,padding:"3px 7px"} }, "TN"),
           e("span", { style:{fontSize:16,fontWeight:700} }, "TraderNova")
@@ -896,7 +896,7 @@
           // ── Quick Actions ──
           e("div", { style:{padding:"32px 40px",flex:1} },
             e("div", { style:{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:2,marginBottom:20,textAlign:"center"} }, "QUICK ACTIONS"),
-            e("div", { style:{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:16,marginBottom:32} },
+            e("div", { style:{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:14,marginBottom:32} },
               [
                 { icon:"⚡", label:"Manual Trader", desc:"Place trades manually with live quotes", tab:"trade", color:"#22d3ee", border:"#164e63" },
                 { icon:"▲", label:"Charts", desc:"Live candlestick charts from tick data", tab:"charts", color:"#a78bfa", border:"#3b0764" },
