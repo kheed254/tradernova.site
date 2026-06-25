@@ -838,7 +838,7 @@
               ? e("div", { style:{color:C.muted,fontSize:12,textAlign:"center"} }, "Authenticating…")
               : authState === "error"
                 ? e("div", { style:{color:C.red,fontSize:12,lineHeight:1.5} }, authError)
-                : e("button", { style:{background:C.cyan,color:"#060d1a",border:"none",borderRadius:8,padding:"10px 14px",fontSize:13,fontWeight:700,cursor:"pointer",width:"100%"}, onClick:redirectToOAuth }, "Connect Demo Account")
+                : e("button", { style:{background:C.cyan,color:"#060d1a",border:"none",borderRadius:8,padding:"10px 14px",fontSize:13,fontWeight:700,cursor:"pointer",width:"100%"}, onClick:redirectToOAuth }, "🔑 Login")
         ),
         e("div", { style:{display:"flex",alignItems:"center",gap:6,padding:"10px 20px 0"} },
           e("span", { style:{width:7,height:7,borderRadius:"50%",background:pubStatus==="connected"?C.green:C.red,display:"inline-block"} }),
@@ -849,90 +849,94 @@
       e("main", { style:{flex:1,overflow:"auto",background:C.bg} },
 
         // ── DASHBOARD TAB ──────────────────────────────────────────────────────
-        tab === "dashboard" && e("div", { style:{padding:32,maxWidth:1100} },
-          e("div", { style:{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:28} },
-            e("div", null,
-              e("h2", { style:{fontSize:24,fontWeight:800,margin:0,letterSpacing:-0.5} }, "Welcome back 👋"),
-              e("p", { style:{color:C.muted,fontSize:14,marginTop:4} }, new Date().toLocaleDateString("en-US",{weekday:"long",year:"numeric",month:"long",day:"numeric"}))
-            ),
-            authState === "authed" && e("div", { style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 20px",textAlign:"right"} },
-              e("div", { style:{fontSize:11,color:C.muted,letterSpacing:1} }, "DEMO BALANCE"),
-              e("div", { style:{fontSize:24,fontFamily:"monospace",fontWeight:800,color:C.text} }, "$"+fmtMoney(balance?.balance)),
-              e("div", { style:{fontSize:11,color:C.muted} }, balance?.currency||"USD")
-            )
+        tab === "dashboard" && e("div", { style:{minHeight:"100%",display:"flex",flexDirection:"column"} },
+
+          // ── Hero section ──
+          e("div", { style:{
+            background:"linear-gradient(135deg, #060d1a 0%, #0a1628 50%, #060d1a 100%)",
+            borderBottom:`1px solid ${C.border}`,
+            padding:"48px 40px 40px",
+            position:"relative",
+            overflow:"hidden",
+          } },
+            // Background glow
+            e("div", { style:{position:"absolute",top:-60,right:-60,width:300,height:300,borderRadius:"50%",background:"radial-gradient(circle, rgba(34,211,238,0.06) 0%, transparent 70%)",pointerEvents:"none"} }),
+
+            authState === "authed"
+              ? e("div", null,
+                  e("div", { style:{fontSize:13,color:C.muted,marginBottom:8,letterSpacing:0.5} }, new Date().toLocaleDateString("en-US",{weekday:"long",year:"numeric",month:"long",day:"numeric"})),
+                  e("h1", { style:{fontSize:32,fontWeight:900,margin:"0 0 8px",letterSpacing:-1,color:C.text} },
+                    "Hello ", e("span",{style:{color:C.cyan}}, activeAccount?.loginid || balance?.loginid || "Trader"), " 👋"
+                  ),
+                  e("p", { style:{color:"#475569",fontSize:14,fontStyle:"italic",margin:"0 0 28px"} }, '"The trend is your friend — until it ends."'),
+                  e("div", { style:{display:"flex",gap:20,flexWrap:"wrap"} },
+                    e("div", null,
+                      e("div", { style:{fontSize:11,color:C.muted,letterSpacing:1,marginBottom:4} }, (activeAccount?.account_type==="real"?"⚠ REAL":"DEMO")+" BALANCE"),
+                      e("div", { style:{fontSize:28,fontFamily:"monospace",fontWeight:900,color:activeAccount?.account_type==="real"?"#fca5a5":C.cyan} }, "$"+fmtMoney(balance?.balance))
+                    ),
+                    e("div", { style:{width:1,background:C.border,alignSelf:"stretch"} }),
+                    e("div", null,
+                      e("div", { style:{fontSize:11,color:C.muted,letterSpacing:1,marginBottom:4} }, "SESSION P/L"),
+                      e("div", { style:{fontSize:28,fontFamily:"monospace",fontWeight:900,color:botPL>=0?C.green:"#f87171"} }, (botPL>=0?"+":"")+"$"+botPL.toFixed(2))
+                    ),
+                    e("div", { style:{width:1,background:C.border,alignSelf:"stretch"} }),
+                    e("div", null,
+                      e("div", { style:{fontSize:11,color:C.muted,letterSpacing:1,marginBottom:4} }, "SESSION TRADES"),
+                      e("div", { style:{fontSize:28,fontFamily:"monospace",fontWeight:900,color:C.text} }, botTrades.length + speedbots.reduce((s,b)=>s+(b.trades||0),0))
+                    )
+                  )
+                )
+              : e("div", null,
+                  e("h1", { style:{fontSize:32,fontWeight:900,margin:"0 0 8px",letterSpacing:-1} }, "Welcome to ", e("span",{style:{color:C.cyan}}, "TraderNova")),
+                  e("p", { style:{color:"#475569",fontSize:14,fontStyle:"italic",margin:"0 0 24px"} }, '"The trend is your friend — until it ends."'),
+                  e("button", { style:{background:C.cyan,color:"#060d1a",border:"none",borderRadius:10,padding:"13px 28px",fontSize:15,fontWeight:800,cursor:"pointer"}, onClick:redirectToOAuth }, "🔑 Login with Deriv")
+                )
           ),
 
-          // Stats row
-          e("div", { style:{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:16,marginBottom:28} },
-            [
-              { label:"Session Trades", value: botTrades.length + speedbots.reduce((s,b)=>s+(b.trades||0),0), color:C.text },
-              { label:"Session Wins", value: botTrades.filter(t=>t.won).length, color:C.green },
-              { label:"Bulk Bot P/L", value: (botPL>=0?"+":"")+"$"+botPL.toFixed(2), color:botPL>=0?C.green:"#f87171" },
-              { label:"Sessions Saved", value: sessionHistory.length, color:C.cyan },
-            ].map(({label,value,color}) =>
-              e("div", { key:label, style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"18px 20px"} },
-                e("div", { style:{fontSize:11,color:C.muted,letterSpacing:1,marginBottom:8} }, label.toUpperCase()),
-                e("div", { style:{fontSize:22,fontWeight:800,fontFamily:"monospace",color} }, value)
-              )
-            )
-          ),
-
-          // Quick launch + Markets preview
-          e("div", { style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:24} },
-
-            // Quick launch
-            e("div", { style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:20} },
-              e("div", { style:{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:1,marginBottom:16} }, "QUICK LAUNCH"),
-              e("div", { style:{display:"flex",flexDirection:"column",gap:10} },
-                [
-                  { label:"⚡ Manual Trade",    tab:"trade",      color:C.cyan },
-                  { label:"▲ Live Chart",       tab:"charts",     color:"#a78bfa" },
-                  { label:"◎ Signal Scanner",   tab:"scanner",    color:"#60a5fa" },
-                  { label:"✦ AI Robots",        tab:"robots",     color:C.green },
-                  { label:"⚙ Auto Trader",      tab:"autotrader", color:"#fb923c" },
-                  { label:"▣ Bulk Trader",      tab:"bulk",       color:"#f472b6" },
-                ].map(({label,tab:t,color}) =>
-                  e("button", { key:t, style:{background:"#0a1628",border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 14px",color,fontSize:13,fontWeight:600,cursor:"pointer",textAlign:"left",width:"100%"}, onClick:()=>setTab(t) }, label)
+          // ── Quick Actions ──
+          e("div", { style:{padding:"32px 40px",flex:1} },
+            e("div", { style:{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:2,marginBottom:20,textAlign:"center"} }, "QUICK ACTIONS"),
+            e("div", { style:{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:16,marginBottom:32} },
+              [
+                { icon:"⚡", label:"Manual Trader", desc:"Place trades manually with live quotes", tab:"trade", color:"#22d3ee", border:"#164e63" },
+                { icon:"▲", label:"Charts", desc:"Live candlestick charts from tick data", tab:"charts", color:"#a78bfa", border:"#3b0764" },
+                { icon:"◎", label:"Analysis Tool", desc:"Signal scanner with digit & rise/fall stats", tab:"scanner", color:"#60a5fa", border:"#1e3a5f" },
+                { icon:"✦", label:"AI Software", desc:"Pre-built AI robot strategies", tab:"robots", color:"#22c55e", border:"#14532d" },
+                { icon:"⚙", label:"Auto Trader", desc:"Condition-based bots, run simultaneously", tab:"autotrader", color:"#fb923c", border:"#431407" },
+                { icon:"▣", label:"Bulk Trader", desc:"Martingale bot with recovery prediction", tab:"bulk", color:"#f472b6", border:"#500724" },
+                { icon:"⛨", label:"Risk Calculator", desc:"Simulate Martingale stake sequences", tab:"risk", color:"#fbbf24", border:"#451a03" },
+                { icon:"▦", label:"Reports", desc:"Trade history and session P/L chart", tab:"reports", color:"#94a3b8", border:"#1e293b" },
+              ].map(({icon,label,desc,tab:t,color,border}) =>
+                e("div", { key:t, onClick:()=>setTab(t), style:{
+                  background:C.card, border:`1px solid ${border}`,
+                  borderRadius:12, padding:"20px", cursor:"pointer",
+                  transition:"border-color 0.15s",
+                  position:"relative", overflow:"hidden",
+                } },
+                  e("div", { style:{position:"absolute",top:0,left:0,right:0,height:3,background:color,borderRadius:"12px 12px 0 0"} }),
+                  e("div", { style:{fontSize:28,marginBottom:10} }, icon),
+                  e("div", { style:{fontSize:14,fontWeight:700,color:C.text,marginBottom:6} }, label),
+                  e("div", { style:{fontSize:12,color:C.muted,lineHeight:1.5} }, desc),
+                  e("div", { style:{fontSize:12,color,marginTop:12,fontWeight:600} }, "Open →")
                 )
               )
             ),
 
             // Recent sessions
-            e("div", { style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:20} },
-              e("div", { style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16} },
+            sessionHistory.length > 0 && e("div", { style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:20} },
+              e("div", { style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14} },
                 e("div", { style:{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:1} }, "RECENT SESSIONS"),
                 e("button", { style:{background:"none",border:"none",color:C.cyan,fontSize:12,cursor:"pointer"}, onClick:()=>setTab("reports") }, "View all →")
               ),
-              sessionHistory.length === 0
-                ? e("div", { style:{textAlign:"center",padding:"24px 0",color:"#475569",fontSize:13} }, "No sessions yet — run a bot to see results here.")
-                : sessionHistory.slice(0,5).map(s =>
-                    e("div", { key:s.id, style:{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:`1px solid #0f172a`} },
-                      e("div", null,
-                        e("div", { style:{fontSize:13,fontWeight:600,color:C.text} }, s.strategy),
-                        e("div", { style:{fontSize:11,color:C.muted} }, s.time)
-                      ),
-                      e("div", { style:{textAlign:"right"} },
-                        e("div", { style:{fontSize:14,fontFamily:"monospace",fontWeight:700,color:s.pl>=0?C.green:"#f87171"} }, (s.pl>=0?"+":"")+"$"+s.pl.toFixed(2)),
-                        e("div", { style:{fontSize:11,color:C.muted} }, s.won+"/"+s.trades+" won")
-                      )
-                    )
-                  )
-            )
-          ),
-
-          // Live market overview
-          e("div", { style:{marginTop:24,background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:20} },
-            e("div", { style:{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:1,marginBottom:16} }, "LIVE MARKET OVERVIEW"),
-            e("div", { style:{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:10} },
-              symbols.slice(0,12).map(sym => {
-                const st = ticks[sym.symbol]||[];
-                const last = st.slice(-1)[0], prev2 = st.slice(-2)[0];
-                const up = last!=null&&prev2!=null&&last>prev2, dn = last!=null&&prev2!=null&&last<prev2;
-                return e("div", { key:sym.symbol, onClick:()=>{setSelSym(sym.symbol);setTab("trade");}, style:{background:"#0a1628",border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 12px",cursor:"pointer"} },
-                  e("div", { style:{fontSize:11,fontWeight:600,color:C.sub,marginBottom:4} }, sym.display_name),
-                  e("div", { style:{fontSize:13,fontFamily:"monospace",fontWeight:700,color:up?C.green:dn?"#f87171":C.text} }, last!=null?Number(last).toFixed(2):"—")
-                );
-              })
+              sessionHistory.slice(0,3).map(s =>
+                e("div", { key:s.id, style:{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:`1px solid #0f172a`} },
+                  e("div", null,
+                    e("div", { style:{fontSize:13,fontWeight:600,color:C.text} }, s.strategy),
+                    e("div", { style:{fontSize:11,color:C.muted} }, s.time+" • "+s.trades+" trades")
+                  ),
+                  e("div", { style:{fontSize:14,fontFamily:"monospace",fontWeight:700,color:s.pl>=0?C.green:"#f87171"} }, (s.pl>=0?"+":"")+"$"+s.pl.toFixed(2))
+                )
+              )
             )
           )
         ),
@@ -1084,7 +1088,7 @@
           e("h2", { style:{fontSize:22,fontWeight:700,margin:"0 0 24px",letterSpacing:-0.5} }, "Place a Trade"),
           authState !== "authed" && e("div", { style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:24,marginBottom:24,maxWidth:340} },
             e("p", { style:{color:C.sub,marginBottom:12} }, "Connect your demo account to trade."),
-            e("button", { style:{background:C.cyan,color:"#060d1a",border:"none",borderRadius:8,padding:"10px 14px",fontSize:13,fontWeight:700,cursor:"pointer",width:"100%"}, onClick:redirectToOAuth }, "Connect Demo Account")
+            e("button", { style:{background:C.cyan,color:"#060d1a",border:"none",borderRadius:8,padding:"10px 14px",fontSize:13,fontWeight:700,cursor:"pointer",width:"100%"}, onClick:redirectToOAuth }, "🔑 Login")
           ),
           e("div", { style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:24,alignItems:"start"} },
             e("div", { style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:24,display:"flex",flexDirection:"column",gap:16} },
@@ -1734,7 +1738,7 @@
           authState !== "authed"
             ? e("div", { style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:24,maxWidth:340} },
                 e("p", { style:{color:C.sub,marginBottom:12} }, "Connect your demo account to use the bot."),
-                e("button", { style:{background:C.cyan,color:"#060d1a",border:"none",borderRadius:8,padding:"10px 14px",fontSize:13,fontWeight:700,cursor:"pointer",width:"100%"}, onClick:redirectToOAuth }, "Connect Demo Account")
+                e("button", { style:{background:C.cyan,color:"#060d1a",border:"none",borderRadius:8,padding:"10px 14px",fontSize:13,fontWeight:700,cursor:"pointer",width:"100%"}, onClick:redirectToOAuth }, "🔑 Login")
               )
             : e("div", { style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:24,alignItems:"start"} },
 
@@ -1972,7 +1976,7 @@
           authState !== "authed"
             ? e("div", { style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:32,textAlign:"center",maxWidth:340} },
                 e("p", { style:{color:C.sub,marginBottom:12} }, "Connect your demo account to view your portfolio."),
-                e("button", { style:{background:C.cyan,color:"#060d1a",border:"none",borderRadius:8,padding:"10px 14px",fontSize:13,fontWeight:700,cursor:"pointer",width:"100%"}, onClick:redirectToOAuth }, "Connect Demo Account")
+                e("button", { style:{background:C.cyan,color:"#060d1a",border:"none",borderRadius:8,padding:"10px 14px",fontSize:13,fontWeight:700,cursor:"pointer",width:"100%"}, onClick:redirectToOAuth }, "🔑 Login")
               )
             : portfolio.length === 0
               ? e("div", { style:{textAlign:"center",padding:"80px 20px",color:"#475569"} },
