@@ -849,7 +849,7 @@
       e("main", { style:{flex:1,overflow:"auto",background:C.bg} },
 
         // ── DASHBOARD TAB ──────────────────────────────────────────────────────
-        tab === "dashboard" && e("div", { style:{minHeight:"100%",display:"flex",flexDirection:"column"} },
+        tab === "dashboard" && e("div", { style:{minHeight:"100%",display:"flex",flexDirection:"column",width:"100%"} },
 
           // ── Hero section ──
           e("div", { style:{
@@ -858,6 +858,8 @@
             padding:"48px 40px 40px",
             position:"relative",
             overflow:"hidden",
+            width:"100%",
+            boxSizing:"border-box",
           } },
             // Background glow
             e("div", { style:{position:"absolute",top:-60,right:-60,width:300,height:300,borderRadius:"50%",background:"radial-gradient(circle, rgba(34,211,238,0.06) 0%, transparent 70%)",pointerEvents:"none"} }),
@@ -896,7 +898,7 @@
           // ── Quick Actions ──
           e("div", { style:{padding:"32px 40px",flex:1} },
             e("div", { style:{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:2,marginBottom:20,textAlign:"center"} }, "QUICK ACTIONS"),
-            e("div", { style:{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:14,marginBottom:32} },
+            e("div", { style:{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:16,marginBottom:32} },
               [
                 { icon:"⚡", label:"Manual Trader", desc:"Place trades manually with live quotes", tab:"trade", color:"#22d3ee", border:"#164e63" },
                 { icon:"▲", label:"Charts", desc:"Live candlestick charts from tick data", tab:"charts", color:"#a78bfa", border:"#3b0764" },
