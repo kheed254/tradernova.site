@@ -940,42 +940,82 @@
         // Account switcher (top-right)
         authState === "authed"
           ? e("div", { style:{position:"relative"} },
-              e("button", { style:{display:"flex",alignItems:"center",gap:8,background:"#0a1628",border:`1px solid ${C.border}`,borderRadius:8,padding:"6px 12px",cursor:"pointer",color:C.text}, onClick:()=>setAccountDropdownOpen(o=>!o) },
-                e("span", { style:{width:8,height:8,borderRadius:"50%",background:activeAccount?.account_type==="real"?"#f87171":C.green,display:"inline-block"} }),
-                e("span", { style:{fontFamily:"monospace",fontWeight:700,fontSize:13,color:activeAccount?.account_type==="real"?"#fca5a5":C.text} }, "$"+fmtMoney(balance?.balance)),
-                e("span", { style:{fontSize:11,color:C.muted} }, balance?.currency||"USD"),
-                e("span", { style:{color:C.muted,fontSize:12} }, accountDropdownOpen?"▲":"▼")
-              ),
-              accountDropdownOpen && e("div", { style:{position:"absolute",right:0,top:"calc(100% + 8px)",background:"#0d1526",border:`1px solid ${C.border}`,borderRadius:12,minWidth:280,zIndex:1000,overflow:"hidden",boxShadow:"0 8px 32px rgba(0,0,0,0.5)"} },
-                // Real/Demo tabs
-                e("div", { style:{display:"flex",borderBottom:`1px solid ${C.border}`} },
-                  ["real","demo"].map(type => {
-                    const acct = accounts.find(a=>a.account_type===type);
-                    if (!acct) return null;
-                    const active = activeAccount?.account_type === type;
-                    return e("button", { key:type, style:{flex:1,padding:"10px",border:"none",borderBottom:active?`2px solid ${type==="real"?"#f87171":C.cyan}`:"2px solid transparent",background:"transparent",color:active?(type==="real"?"#f87171":C.cyan):C.muted,fontSize:12,fontWeight:700,cursor:"pointer",textTransform:"capitalize"}, onClick:()=>{ if (!active) requestSwitchAccount(acct); } },
-                      type==="real" ? "Real" : "Demo"
-                    );
-                  })
+              e("button", { style:{display:"flex",alignItems:"center",gap:8,background:"transparent",border:"none",cursor:"pointer",color:C.text,padding:"6px 8px"}, onClick:()=>setAccountDropdownOpen(o=>!o) },
+                // Currency flag circle
+                e("div", { style:{width:28,height:28,borderRadius:"50%",background:"#1e293b",border:`2px solid ${activeAccount?.account_type==="real"?"#f87171":C.cyan}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16} },
+                  activeAccount?.account_type==="real" ? "🇺🇸" : "🎮"
                 ),
-                // Account details
-                e("div", { style:{padding:16} },
-                  e("div", { style:{fontSize:10,color:C.muted,letterSpacing:1,marginBottom:10} }, "DERIV ACCOUNT"),
-                  accounts.map(acct =>
-                    e("div", { key:acct.account_id, onClick:()=>{ requestSwitchAccount(acct); setAccountDropdownOpen(false); }, style:{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 12px",borderRadius:8,cursor:"pointer",background:activeAccount?.account_id===acct.account_id?"#0a1628":"transparent",border:`1px solid ${activeAccount?.account_id===acct.account_id?C.border:"transparent"}`,marginBottom:6} },
-                      e("div", { style:{display:"flex",alignItems:"center",gap:10} },
-                        e("div", { style:{width:32,height:32,borderRadius:"50%",background:"#1e293b",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14} }, acct.account_type==="real"?"💵":"🎮"),
-                        e("div", null,
-                          e("div", { style:{fontSize:13,fontWeight:600,color:C.text,textTransform:"capitalize"} }, acct.account_type),
-                          e("div", { style:{fontSize:11,color:C.muted} }, acct.loginid||acct.account_id)
-                        )
-                      ),
-                      activeAccount?.account_id===acct.account_id && e("span", { style:{width:8,height:8,borderRadius:"50%",background:acct.account_type==="real"?"#f87171":C.green,display:"inline-block"} })
-                    )
+                e("span", { style:{fontFamily:"monospace",fontWeight:700,fontSize:14,color:C.text} },
+                  fmtMoney(balance?.balance)+" "+(balance?.currency||"USD")
+                ),
+                e("span", { style:{color:C.muted,fontSize:13} }, accountDropdownOpen ? "▲" : "▼")
+              ),
+
+              accountDropdownOpen && e(React.Fragment, null,
+                // Click outside to close
+                e("div", { style:{position:"fixed",inset:0,zIndex:999}, onClick:()=>setAccountDropdownOpen(false) }),
+                e("div", { style:{position:"absolute",right:0,top:"calc(100% + 4px)",background:"#0d1526",border:`1px solid ${C.border}`,borderRadius:12,minWidth:300,zIndex:1000,overflow:"hidden",boxShadow:"0 8px 32px rgba(0,0,0,0.6)"} },
+
+                  // Real / Demo tabs
+                  e("div", { style:{display:"flex",borderBottom:`1px solid ${C.border}`} },
+                    ["real","demo"].map(type => {
+                      const acct = accounts.find(a=>a.account_type===type);
+                      const active = activeAccount?.account_type === type;
+                      return e("button", { key:type, style:{
+                        flex:1,padding:"12px 0",border:"none",cursor:acct?"pointer":"default",
+                        borderBottom:active?`2px solid #f87171`:"2px solid transparent",
+                        background:"transparent",
+                        color:active?C.text:C.muted,
+                        fontSize:13,fontWeight:active?700:500,
+                      }, onClick:()=>{ if(acct && !active) { requestSwitchAccount(acct); setAccountDropdownOpen(false); } } },
+                        type==="real" ? "Real" : "Demo"
+                      );
+                    })
                   ),
-                  e("div", { style:{height:1,background:C.border,margin:"10px 0"} }),
-                  e("button", { style:{width:"100%",padding:"9px",borderRadius:8,border:`1px solid ${C.border}`,background:"transparent",color:"#f87171",fontSize:13,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8}, onClick:()=>{ setAuthState("idle"); setAccountDropdownOpen(false); setAccounts([]); setActiveAccount(null); setBalance(null); } },
-                    "Logout →"
+
+                  // Accounts list
+                  e("div", { style:{padding:"12px 16px"} },
+                    e("div", { style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10} },
+                      e("span", { style:{fontSize:12,fontWeight:700,color:C.sub} }, "Deriv account"+(accounts.length>1?"s":"")),
+                      e("span", { style:{color:C.muted,fontSize:14,cursor:"pointer"}, onClick:()=>setAccountDropdownOpen(false) }, "▲")
+                    ),
+                    accounts.filter(a=>a.account_type===activeAccount?.account_type).map(acct =>
+                      e("div", { key:acct.account_id, style:{
+                        display:"flex",alignItems:"center",justifyContent:"space-between",
+                        background:"#0a1628",borderRadius:10,padding:"12px 14px",marginBottom:8,
+                      } },
+                        e("div", { style:{display:"flex",alignItems:"center",gap:12} },
+                          e("div", { style:{width:36,height:36,borderRadius:"50%",background:"#1e293b",border:`2px solid ${acct.account_type==="real"?"#475569":C.cyan}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18} },
+                            acct.account_type==="real" ? "🇺🇸" : "🎮"
+                          ),
+                          e("div", null,
+                            e("div", { style:{fontSize:13,fontWeight:700,color:C.text} },
+                              acct.account_type==="real" ? "USD" : "Demo"
+                            ),
+                            e("div", { style:{fontSize:11,color:C.muted} }, acct.loginid||acct.account_id)
+                          )
+                        ),
+                        e("div", { style:{display:"flex",alignItems:"center",gap:10} },
+                          acct.account_type==="demo" && e("button", {
+                            style:{background:"#1e293b",border:`1px solid ${C.border}`,borderRadius:6,padding:"5px 10px",fontSize:11,color:C.text,cursor:"pointer",fontWeight:600},
+                            onClick:()=>{ showToast("Balance reset is handled by Deriv — visit deriv.com to reset demo balance", true); }
+                          }, "Reset balance"),
+                          e("span", { style:{fontFamily:"monospace",fontSize:13,fontWeight:700,color:C.text} },
+                            fmtMoney(balance?.balance)+" "+(balance?.currency||"USD")
+                          )
+                        )
+                      )
+                    ),
+
+                    e("div", { style:{fontSize:12,color:"#f87171",padding:"4px 0 10px",cursor:"pointer"} }, "Looking for CFD accounts? Go to Trader's Hub"),
+                    e("div", { style:{borderTop:`1px solid ${C.border}`,paddingTop:10} },
+                      e("button", { style:{
+                        background:"none",border:"none",color:C.sub,fontSize:13,cursor:"pointer",
+                        display:"flex",alignItems:"center",gap:8,width:"100%",justifyContent:"flex-end",padding:"4px 0"
+                      }, onClick:()=>{ setAuthState("idle"); setAccountDropdownOpen(false); setAccounts([]); setActiveAccount(null); setBalance(null); } },
+                        "Logout", e("span",{style:{fontSize:16}},"→")
+                      )
+                    )
                   )
                 )
               )
