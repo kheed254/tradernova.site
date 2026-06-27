@@ -163,7 +163,8 @@
     const [accounts, setAccounts] = useState([]); // all available accounts
     const [activeAccount, setActiveAccount] = useState(null); // currently selected account
     const [switchingAccount, setSwitchingAccount] = useState(false);
-    const [realWarningPending, setRealWarningPending] = useState(null); // account to switch to after confirmation
+    const [realWarningPending, setRealWarningPending] = useState(null);
+    const [accountDropdownOpen, setAccountDropdownOpen] = useState(false);
     const accessTokenRef = useRef(null); // stored for account switching
     const [symbols, setSymbols]     = useState([]);
     const [selSym, setSelSym]       = useState(null);
@@ -916,14 +917,77 @@
       );
     }
 
-    return e("div", { style:{display:"flex",height:"100vh",overflow:"hidden",background:C.bg} },
+    return e("div", { style:{display:"flex",flexDirection:"column",height:"100vh",overflow:"hidden",background:C.bg} },
 
-      e("aside", { style:{width:220,background:C.sidebar,borderRight:`1px solid #0f172a`,display:"flex",flexDirection:"column",padding:"24px 0 16px",flexShrink:0,overflowY:"auto",height:"100vh"} },
-        e("div", { style:{display:"flex",alignItems:"center",gap:10,padding:"0 20px 24px",borderBottom:"1px solid #0f172a"} },
+      // ── Top Header Bar ──
+      e("header", { style:{background:C.sidebar,borderBottom:`1px solid #0f172a`,padding:"0 20px",display:"flex",alignItems:"center",justifyContent:"space-between",height:52,flexShrink:0,zIndex:100} },
+        // Logo
+        e("div", { style:{display:"flex",alignItems:"center",gap:10} },
           e("span", { style:{background:C.cyan,color:"#060d1a",fontWeight:900,fontSize:14,borderRadius:6,padding:"3px 7px"} }, "TN"),
-          e("span", { style:{fontSize:16,fontWeight:700} }, "TraderNova")
+          e("span", { style:{fontSize:16,fontWeight:700,color:C.text} }, "TraderNova")
         ),
-        e("div", { style:{display:"flex",flexDirection:"column",gap:2,padding:"20px 0",flex:1} },
+        // Nav tabs (horizontal)
+        e("div", { style:{display:"flex",gap:2,overflowX:"auto",flex:1,margin:"0 20px"} },
+          [["dashboard","Dashboard"],["market","Markets"],["trade","Trade"],["charts","Charts"],["scanner","Scanner"],["robots","AI Robots"],["autotrader","Auto Trader"],["bulk","Bulk Trader"],["risk","Risk Calc"],["reports","Reports"],["portfolio","Portfolio"]].map(([key,label]) =>
+            e("button", { key, onClick:()=>setTab(key), style:{
+              padding:"6px 12px",border:"none",borderRadius:6,cursor:"pointer",fontSize:12,fontWeight:500,whiteSpace:"nowrap",
+              background: tab===key ? "#0f172a" : "transparent",
+              color: tab===key ? C.cyan : C.muted,
+              borderBottom: tab===key ? `2px solid ${C.cyan}` : "2px solid transparent",
+            } }, label)
+          )
+        ),
+        // Account switcher (top-right)
+        authState === "authed"
+          ? e("div", { style:{position:"relative"} },
+              e("button", { style:{display:"flex",alignItems:"center",gap:8,background:"#0a1628",border:`1px solid ${C.border}`,borderRadius:8,padding:"6px 12px",cursor:"pointer",color:C.text}, onClick:()=>setAccountDropdownOpen(o=>!o) },
+                e("span", { style:{width:8,height:8,borderRadius:"50%",background:activeAccount?.account_type==="real"?"#f87171":C.green,display:"inline-block"} }),
+                e("span", { style:{fontFamily:"monospace",fontWeight:700,fontSize:13,color:activeAccount?.account_type==="real"?"#fca5a5":C.text} }, "$"+fmtMoney(balance?.balance)),
+                e("span", { style:{fontSize:11,color:C.muted} }, balance?.currency||"USD"),
+                e("span", { style:{color:C.muted,fontSize:12} }, accountDropdownOpen?"▲":"▼")
+              ),
+              accountDropdownOpen && e("div", { style:{position:"absolute",right:0,top:"calc(100% + 8px)",background:"#0d1526",border:`1px solid ${C.border}`,borderRadius:12,minWidth:280,zIndex:1000,overflow:"hidden",boxShadow:"0 8px 32px rgba(0,0,0,0.5)"} },
+                // Real/Demo tabs
+                e("div", { style:{display:"flex",borderBottom:`1px solid ${C.border}`} },
+                  ["real","demo"].map(type => {
+                    const acct = accounts.find(a=>a.account_type===type);
+                    if (!acct) return null;
+                    const active = activeAccount?.account_type === type;
+                    return e("button", { key:type, style:{flex:1,padding:"10px",border:"none",borderBottom:active?`2px solid ${type==="real"?"#f87171":C.cyan}`:"2px solid transparent",background:"transparent",color:active?(type==="real"?"#f87171":C.cyan):C.muted,fontSize:12,fontWeight:700,cursor:"pointer",textTransform:"capitalize"}, onClick:()=>{ if (!active) requestSwitchAccount(acct); } },
+                      type==="real" ? "Real" : "Demo"
+                    );
+                  })
+                ),
+                // Account details
+                e("div", { style:{padding:16} },
+                  e("div", { style:{fontSize:10,color:C.muted,letterSpacing:1,marginBottom:10} }, "DERIV ACCOUNT"),
+                  accounts.map(acct =>
+                    e("div", { key:acct.account_id, onClick:()=>{ requestSwitchAccount(acct); setAccountDropdownOpen(false); }, style:{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 12px",borderRadius:8,cursor:"pointer",background:activeAccount?.account_id===acct.account_id?"#0a1628":"transparent",border:`1px solid ${activeAccount?.account_id===acct.account_id?C.border:"transparent"}`,marginBottom:6} },
+                      e("div", { style:{display:"flex",alignItems:"center",gap:10} },
+                        e("div", { style:{width:32,height:32,borderRadius:"50%",background:"#1e293b",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14} }, acct.account_type==="real"?"💵":"🎮"),
+                        e("div", null,
+                          e("div", { style:{fontSize:13,fontWeight:600,color:C.text,textTransform:"capitalize"} }, acct.account_type),
+                          e("div", { style:{fontSize:11,color:C.muted} }, acct.loginid||acct.account_id)
+                        )
+                      ),
+                      activeAccount?.account_id===acct.account_id && e("span", { style:{width:8,height:8,borderRadius:"50%",background:acct.account_type==="real"?"#f87171":C.green,display:"inline-block"} })
+                    )
+                  ),
+                  e("div", { style:{height:1,background:C.border,margin:"10px 0"} }),
+                  e("button", { style:{width:"100%",padding:"9px",borderRadius:8,border:`1px solid ${C.border}`,background:"transparent",color:"#f87171",fontSize:13,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8}, onClick:()=>{ setAuthState("idle"); setAccountDropdownOpen(false); setAccounts([]); setActiveAccount(null); setBalance(null); } },
+                    "Logout →"
+                  )
+                )
+              )
+            )
+          : e("button", { style:{background:C.cyan,color:"#060d1a",border:"none",borderRadius:8,padding:"7px 14px",fontSize:12,fontWeight:700,cursor:"pointer"}, onClick:redirectToOAuth }, "🔑 Login")
+      ),
+
+      // ── Body (sidebar + main) ──
+      e("div", { style:{display:"flex",flex:1,overflow:"hidden"} },
+
+      e("aside", { style:{width:200,background:C.sidebar,borderRight:`1px solid #0f172a`,display:"flex",flexDirection:"column",padding:"16px 0",flexShrink:0,overflowY:"auto"} },
+        e("div", { style:{display:"flex",flexDirection:"column",gap:2,flex:1} },
           [["dashboard","⬡","Dashboard"],["market","◈","Markets"],["trade","⚡","Trade"],["charts","▲","Charts"],["scanner","◎","Scanner"],["robots","✦","AI Robots"],["autotrader","⚙","Auto Trader"],["bulk","▣","Bulk Trader"],["risk","⛨","Risk Calc"],["reports","▦","Reports"],["portfolio","▤","Portfolio"]].map(([key,icon,label]) =>
             e("button", { key, style:navBtn(key), onClick:()=>setTab(key) },
               e("span", { style:{fontSize:18,width:24} }, icon),
@@ -931,42 +995,14 @@
             )
           )
         ),
-        e("div", { style:{padding:"16px",borderTop:"1px solid #0f172a"} },
-          authState === "authed"
-            ? e("div", null,
-                // Demo/Real toggle tabs
-                accounts.length > 1 && e("div", { style:{display:"flex",background:"#060d1a",borderRadius:8,padding:2,marginBottom:10,border:`1px solid ${C.border}`} },
-                  ["demo","real"].map(type => {
-                    const acct = accounts.find(a=>a.account_type===type);
-                    if (!acct) return null;
-                    const active = activeAccount?.account_type === type;
-                    return e("button", { key:type, style:{flex:1,padding:"6px",borderRadius:6,border:"none",background:active?(type==="real"?"#7f1d1d":"#0f172a"):"transparent",color:active?(type==="real"?"#fca5a5":C.cyan):C.muted,fontSize:11,fontWeight:700,cursor:"pointer",letterSpacing:0.5}, onClick:()=>requestSwitchAccount(acct) },
-                      type === "real" ? "⚠ REAL" : "DEMO"
-                    );
-                  })
-                ),
-                // Balance display
-                e("div", { style:{background: activeAccount?.account_type==="real"?"#1c0a0a":"#0a1628", border:`1px solid ${activeAccount?.account_type==="real"?"#7f1d1d":C.border}`,borderRadius:8,padding:"10px 12px"} },
-                  e("div", { style:{display:"flex",alignItems:"center",gap:6,marginBottom:6} },
-                    e("span", { style:{width:7,height:7,borderRadius:"50%",background:activeAccount?.account_type==="real"?"#f87171":C.green,display:"inline-block"} }),
-                    e("span", { style:{color:activeAccount?.account_type==="real"?"#fca5a5":C.sub,fontSize:11,fontWeight:600} }, switchingAccount?"Switching…":(activeAccount?.account_type==="real"?"⚠ REAL MONEY":"Demo Account"))
-                  ),
-                  e("div", { style:{color:C.muted,fontSize:11,letterSpacing:1} }, "BALANCE"),
-                  e("div", { style:{color:C.text,fontSize:20,fontFamily:"monospace",fontWeight:700} }, "$"+fmtMoney(balance?.balance ?? balance?.amount ?? balance?.value)),
-                  e("div", { style:{color:C.muted,fontSize:11} }, balance?.currency||"USD")
-                )
-              )
-            : authState === "loading"
-              ? e("div", { style:{color:C.muted,fontSize:12,textAlign:"center"} }, "Authenticating…")
-              : authState === "error"
-                ? e("div", { style:{color:C.red,fontSize:12,lineHeight:1.5} }, authError)
-                : e("button", { style:{background:C.cyan,color:"#060d1a",border:"none",borderRadius:8,padding:"10px 14px",fontSize:13,fontWeight:700,cursor:"pointer",width:"100%"}, onClick:redirectToOAuth }, "🔑 Login")
-        ),
-        e("div", { style:{display:"flex",alignItems:"center",gap:6,padding:"10px 20px 0"} },
-          e("span", { style:{width:7,height:7,borderRadius:"50%",background:pubStatus==="connected"?C.green:C.red,display:"inline-block"} }),
-          e("span", { style:{color:"#475569",fontSize:10,letterSpacing:1} }, "MARKET "+pubStatus.toUpperCase())
+        e("div", { style:{padding:"12px 16px",borderTop:`1px solid #0f172a`,fontSize:10,color:"#334155",letterSpacing:0.5} },
+          e("div", { style:{display:"flex",alignItems:"center",gap:6} },
+            e("span", { style:{width:6,height:6,borderRadius:"50%",background:pubStatus==="connected"?C.green:C.red,display:"inline-block"} }),
+            e("span", null, "MARKET "+pubStatus.toUpperCase())
+          )
         )
       ),
+
 
       e("main", { style:{flex:1,overflow:"auto",background:C.bg} },
 
@@ -2122,7 +2158,8 @@
                   )
                 )
         )
-      ),
+      )
+    ), // closes body wrapper (aside + main)
 
       toast && e("div", { style:{position:"fixed",bottom:24,right:24,padding:"14px 20px",borderRadius:10,border:"1px solid",fontSize:13,fontWeight:600,maxWidth:360,zIndex:1000,boxShadow:"0 8px 32px rgba(0,0,0,0.5)",background:toast.ok?"#052e16":"#1f0a0a",borderColor:toast.ok?C.green:C.red,color:toast.ok?C.green:C.red} }, toast.msg),
 
