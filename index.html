@@ -942,8 +942,10 @@
           ? e("div", { style:{position:"relative"} },
               e("button", { style:{display:"flex",alignItems:"center",gap:8,background:"transparent",border:"none",cursor:"pointer",color:C.text,padding:"6px 8px"}, onClick:()=>setAccountDropdownOpen(o=>!o) },
                 // Currency flag circle
-                e("div", { style:{width:28,height:28,borderRadius:"50%",background:"#1e293b",border:`2px solid ${activeAccount?.account_type==="real"?"#f87171":C.cyan}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16} },
-                  activeAccount?.account_type==="real" ? "🇺🇸" : "🎮"
+                e("div", { style:{width:28,height:28,borderRadius:"50%",overflow:"hidden",border:`2px solid ${activeAccount?.account_type==="real"?"#f87171":C.cyan}`,flexShrink:0} },
+                  activeAccount?.account_type==="real"
+                    ? e("img", { src:"https://flagcdn.com/w40/us.png", style:{width:"100%",height:"100%",objectFit:"cover"}, alt:"USD" })
+                    : e("div", { style:{width:"100%",height:"100%",background:"#1e293b",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14} }, "🎮")
                 ),
                 e("span", { style:{fontFamily:"monospace",fontWeight:700,fontSize:14,color:C.text} },
                   fmtMoney(balance?.balance)+" "+(balance?.currency||"USD")
@@ -985,8 +987,10 @@
                         background:"#0a1628",borderRadius:10,padding:"12px 14px",marginBottom:8,
                       } },
                         e("div", { style:{display:"flex",alignItems:"center",gap:12} },
-                          e("div", { style:{width:36,height:36,borderRadius:"50%",background:"#1e293b",border:`2px solid ${acct.account_type==="real"?"#475569":C.cyan}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18} },
-                            acct.account_type==="real" ? "🇺🇸" : "🎮"
+                          e("div", { style:{width:36,height:36,borderRadius:"50%",overflow:"hidden",border:`2px solid ${acct.account_type==="real"?"#475569":C.cyan}`,flexShrink:0} },
+                            acct.account_type==="real"
+                              ? e("img", { src:"https://flagcdn.com/w40/us.png", style:{width:"100%",height:"100%",objectFit:"cover"}, alt:"USD" })
+                              : e("div", { style:{width:"100%",height:"100%",background:"#1e293b",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18} }, "🎮")
                           ),
                           e("div", null,
                             e("div", { style:{fontSize:13,fontWeight:700,color:C.text} },
