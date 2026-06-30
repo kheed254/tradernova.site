@@ -173,6 +173,7 @@
     const [ticks, setTicks]         = useState({});
     const [pubStatus, setPubStatus] = useState("disconnected");
     const [stake, setStake]         = useState("10");
+    const [digitBarrier, setDigitBarrier] = useState("5"); // for DIGITMATCH/DIGITDIFF/DIGITOVER/DIGITUNDER
     const [dur, setDur]             = useState("5");
     const [durUnit, setDurUnit]     = useState("t");
     const [proposal, setProposal]   = useState(null);
@@ -291,7 +292,8 @@
         }
         if (msg.msg_type === "contracts_for") {
           console.log("contracts_for msg:", msg);
-          const list = msg.contracts_for?.available || [];
+          const SUPPORTED = ["CALL","PUT","DIGITEVEN","DIGITODD","DIGITOVER","DIGITUNDER","DIGITMATCH","DIGITDIFF","MULTUP","MULTDOWN","TURBOSLONG","TURBOSSHORT"];
+          const list = (msg.contracts_for?.available || []).filter(c => SUPPORTED.includes(c.contract_type));
           setContracts(list);
           setSelCon(prev => prev || (list[0] ?? null));
         }
@@ -785,7 +787,9 @@
       if (!selSym) { showToast("Please select an asset first", false); return; }
       if (!selCon) { showToast("No contract types loaded for this asset yet — try reselecting it, or check market connection", false); return; }
       setPropLoading(true); setProposal(null);
+      const needsBarrier = ["DIGITMATCH","DIGITDIFF","DIGITOVER","DIGITUNDER"].includes(selCon.contract_type);
       const req = { proposal:1, amount:parseFloat(stake)||10, basis:"stake", contract_type:selCon.contract_type, currency:"USD", duration:parseInt(dur)||5, duration_unit:durUnit, underlying_symbol:selSym };
+      if (needsBarrier) req.barrier = digitBarrier;
       console.log("sending proposal request:", req);
       authWs.send(req);
       setTimeout(() => {
@@ -799,8 +803,9 @@
     function buyNow() {
       if (!selSym || !selCon) return;
       setBuyLoading(true);
-      // Re-request a fresh proposal immediately before buying — proposal IDs are short-lived
+      const needsBarrier = ["DIGITMATCH","DIGITDIFF","DIGITOVER","DIGITUNDER"].includes(selCon.contract_type);
       const req = { proposal:1, amount:parseFloat(stake)||10, basis:"stake", contract_type:selCon.contract_type, currency:"USD", duration:parseInt(dur)||5, duration_unit:durUnit, underlying_symbol:selSym };
+      if (needsBarrier) req.barrier = digitBarrier;
       console.log("refreshing proposal before buy:", req);
       pendingBuyRef.current = true;
       authWs.send(req);
@@ -1323,6 +1328,12 @@
                     )
                   )
                 )
+              ),
+              ["DIGITMATCH","DIGITDIFF","DIGITOVER","DIGITUNDER"].includes(selCon?.contract_type) && e("div", null,
+                e("label", { style:{fontSize:11,fontWeight:600,color:C.muted,letterSpacing:1,textTransform:"uppercase",display:"block",marginBottom:6} },
+                  selCon?.contract_type==="DIGITMATCH"||selCon?.contract_type==="DIGITDIFF" ? "Target Digit (0-9)" : "Barrier Digit (0-9)"
+                ),
+                e("input", { style:fieldStyle, type:"number", min:"0", max:"9", value:digitBarrier, onChange:ev=>setDigitBarrier(String(Math.max(0,Math.min(9,parseInt(ev.target.value)||0)))) })
               ),
               e("button", {
                 style:{background:C.cyan,color:"#060d1a",border:"none",borderRadius:8,padding:11,fontSize:14,fontWeight:700,cursor:"pointer",width:"100%",opacity:authState!=="authed"?0.4:1},
