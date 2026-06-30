@@ -641,6 +641,36 @@
     // Connect to public market data on load
     useEffect(() => { pubWs.connect(); }, []);
 
+    // Restore session on reload if token is saved in sessionStorage
+    useEffect(() => {
+      const savedToken = sessionStorage.getItem("tn_access_token");
+      const savedAccount = sessionStorage.getItem("tn_active_account");
+      if (!savedToken || !savedAccount) return;
+      const account = JSON.parse(savedAccount);
+      accessTokenRef.current = savedToken;
+      setAuthState("loading");
+      // Refetch all accounts and reconnect WS
+      getAllAccounts(savedToken)
+        .then(async (allAccounts) => {
+          setAccounts(allAccounts);
+          // Use the previously active account, or fall back to demo
+          const restored = allAccounts.find(a => a.account_id === account.account_id)
+            || allAccounts.find(a => a.account_type === "demo")
+            || allAccounts[0];
+          setActiveAccount(restored);
+          const otp = await fetchOTPViaBackend(restored.account_id, savedToken);
+          setAuthState("authed");
+          return otp.ws_url;
+        })
+        .then(wsUrl => authWs.connect(wsUrl))
+        .catch(() => {
+          // Token expired — clear saved session silently
+          sessionStorage.removeItem("tn_access_token");
+          sessionStorage.removeItem("tn_active_account");
+          setAuthState("idle");
+        });
+    }, []);
+
     // Handle OAuth callback
     useEffect(() => {
       const { code, state, error } = getCallbackParams();
@@ -667,11 +697,13 @@
           sessionStorage.removeItem("pkce_code_verifier");
           sessionStorage.removeItem("oauth_state");
           accessTokenRef.current = tokenData.access_token;
+          // Persist token for reload recovery
+          sessionStorage.setItem("tn_access_token", tokenData.access_token);
           const allAccounts = await getAllAccounts(tokenData.access_token);
           setAccounts(allAccounts);
-          // Default to demo account
           const demo = allAccounts.find(a => a.account_type === "demo") || allAccounts[0];
           setActiveAccount(demo);
+          sessionStorage.setItem("tn_active_account", JSON.stringify(demo));
           const otp = await fetchOTPViaBackend(demo.account_id, tokenData.access_token);
           setAuthState("authed");
           return otp.ws_url;
@@ -1143,7 +1175,7 @@
                       e("button", { style:{
                         background:"none",border:"none",color:C.sub,fontSize:13,cursor:"pointer",
                         display:"flex",alignItems:"center",gap:8,width:"100%",justifyContent:"flex-end",padding:"4px 0"
-                      }, onClick:()=>{ setAuthState("idle"); setAccountDropdownOpen(false); setAccounts([]); setActiveAccount(null); setBalance(null); } },
+                      }, onClick:()=>{ sessionStorage.removeItem("tn_access_token"); sessionStorage.removeItem("tn_active_account"); setAuthState("idle"); setAccountDropdownOpen(false); setAccounts([]); setActiveAccount(null); setBalance(null); accessTokenRef.current = null; } },
                         "Logout", e("span",{style:{fontSize:16}},"→")
                       )
                     )
