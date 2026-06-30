@@ -1028,9 +1028,29 @@
       // ── Top Header Bar ──
       e("header", { style:{background:C.sidebar,borderBottom:`1px solid ${C.border}`,padding:"0 20px",display:"flex",alignItems:"center",justifyContent:"space-between",height:52,flexShrink:0,zIndex:100,backdropFilter:"blur(12px)"} },
         // Logo
-        e("div", { style:{display:"flex",alignItems:"center",gap:10,flexShrink:0} },
-          e("span", { style:{background:C.green,color:"#08090c",fontWeight:900,fontSize:13,borderRadius:6,padding:"3px 8px",fontFamily:"'JetBrains Mono',monospace",letterSpacing:-0.5} }, "TN"),
-          e("span", { style:{fontSize:15,fontWeight:800,color:C.text,letterSpacing:-0.5} }, "TraderNova")
+        e("div", { style:{display:"flex",alignItems:"center",gap:10,flexShrink:0,cursor:"pointer"}, onClick:()=>setTab("dashboard") },
+          // SVG candlestick-inspired TN monogram
+          e("svg", { width:32, height:32, viewBox:"0 0 32 32", fill:"none", xmlns:"http://www.w3.org/2000/svg" },
+            // Background rounded square
+            e("rect", { width:32, height:32, rx:7, fill:"#39ff88" }),
+            // Candlestick wick (vertical center line)
+            e("line", { x1:10, y1:4, x2:10, y2:28, stroke:"#08090c", strokeWidth:1.5, strokeLinecap:"round" }),
+            // Candlestick body (green rect on the T-stem)
+            e("rect", { x:7, y:11, width:6, height:10, rx:1, fill:"#08090c" }),
+            // T crossbar
+            e("line", { x1:4, y1:8, x2:16, y2:8, stroke:"#08090c", strokeWidth:2.5, strokeLinecap:"round" }),
+            // N letter (right side)
+            e("line", { x1:18, y1:8, x2:18, y2:24, stroke:"#08090c", strokeWidth:2.5, strokeLinecap:"round" }),
+            e("line", { x1:18, y1:8, x2:28, y2:24, stroke:"#08090c", strokeWidth:2, strokeLinecap:"round" }),
+            e("line", { x1:28, y1:8, x2:28, y2:24, stroke:"#08090c", strokeWidth:2.5, strokeLinecap:"round" })
+          ),
+          // Wordmark
+          e("div", { style:{display:"flex",flexDirection:"column",gap:0,lineHeight:1} },
+            e("span", { style:{fontSize:14,fontWeight:900,color:C.text,letterSpacing:-0.8,fontFamily:"'Inter',sans-serif"} }, "Trader",
+              e("span", { style:{color:C.green} }, "Nova")
+            ),
+            e("span", { style:{fontSize:8,fontWeight:600,color:C.muted,letterSpacing:2,textTransform:"uppercase"} }, "Trading Hub")
+          )
         ),
         // Nav tabs (horizontal)
         e("div", { style:{display:"flex",gap:1,overflowX:"auto",flex:1,margin:"0 16px"} },
