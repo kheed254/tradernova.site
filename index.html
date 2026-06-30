@@ -501,7 +501,7 @@
         }
 
         // ── Manual (Trade tab) flows ──
-        if (msg.msg_type === "proposal" && msg.req_id == null)  {
+        if (msg.msg_type === "proposal" && (msg.req_id === 7001 || msg.req_id == null))  {
           console.log("proposal msg:", msg);
           if (msg.error) {
             showToast("Quote failed: " + msg.error.message, false);
@@ -512,11 +512,11 @@
             setProposal(msg.proposal); propIdRef.current = msg.proposal?.id; setPropLoading(false);
             if (pendingBuyRef.current) {
               pendingBuyRef.current = false;
-              authWs.send({ buy: msg.proposal.id, price: parseFloat(msg.proposal.ask_price) });
+              authWs.send({ buy: msg.proposal.id, price: parseFloat(msg.proposal.ask_price), req_id: 7002 });
             }
           }
         }
-        if (msg.msg_type === "buy" && msg.req_id == null)       { setBuyResult(msg.buy); setBuyLoading(false); showToast(msg.error ? "Buy failed: "+msg.error.message : "✓ Contract #"+msg.buy?.contract_id+" purchased", !msg.error); authWs.send({portfolio:1}); }
+        if (msg.msg_type === "buy" && (msg.req_id === 7002 || msg.req_id == null)) { setBuyResult(msg.buy); setBuyLoading(false); showToast(msg.error ? "Buy failed: "+msg.error.message : "✓ Contract #"+msg.buy?.contract_id+" purchased", !msg.error); authWs.send({portfolio:1}); }
 
         if (msg.error && msg.msg_type !== "buy" && msg.msg_type !== "proposal" && msg.msg_type !== "proposal_open_contract") { showToast("Error: "+msg.error.message, false); setPropLoading(false); setBuyLoading(false); }
       }
@@ -843,7 +843,7 @@
         proposal:1, amount:parseFloat(stake)||10, basis:"stake",
         contract_type:selCon.contract_type, currency:"USD",
         duration:parseInt(dur)||5, duration_unit:durUnit,
-        underlying_symbol:selSym,
+        underlying_symbol:selSym, req_id: 7001,
       };
       if (needsBarrier) req.barrier = String(parseInt(digitBarrier)||5);
       console.log("sending proposal request:", req);
@@ -860,8 +860,8 @@
       if (!selSym || !selCon) return;
       setBuyLoading(true);
       const needsBarrier = ["DIGITMATCH","DIGITDIFF","DIGITOVER","DIGITUNDER"].includes(selCon.contract_type);
-      const req = { proposal:1, amount:parseFloat(stake)||10, basis:"stake", contract_type:selCon.contract_type, currency:"USD", duration:parseInt(dur)||5, duration_unit:durUnit, underlying_symbol:selSym };
-      if (needsBarrier) req.barrier = digitBarrier;
+      const req = { proposal:1, amount:parseFloat(stake)||10, basis:"stake", contract_type:selCon.contract_type, currency:"USD", duration:parseInt(dur)||5, duration_unit:durUnit, underlying_symbol:selSym, req_id: 7001 };
+      if (needsBarrier) req.barrier = String(parseInt(digitBarrier)||5);
       console.log("refreshing proposal before buy:", req);
       pendingBuyRef.current = true;
       authWs.send(req);
