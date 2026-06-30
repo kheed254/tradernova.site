@@ -203,7 +203,7 @@
     const W = 120, H = 32;
     const pts = ticks.map((v,i) => `${(i/(ticks.length-1))*W},${H-((v-min)/range)*H}`).join(" ");
     return e("svg", { width:W, height:H, viewBox:`0 0 ${W} ${H}`, style:{display:"block"} },
-      e("polyline", { points:pts, fill:"none", stroke:color||C.green, strokeWidth:"1.5", strokeLinejoin:"round" })
+      e("polyline", { points:pts, fill:"none", stroke:color||"#39ff88", strokeWidth:"1.5", strokeLinejoin:"round" })
     );
   }
 
@@ -710,10 +710,10 @@
 
     // Auto Trader tile definitions
     const AUTO_TILES = [
-      { id:"eo_digits",  label:"Even/Odd",          sub:"Digits",      color:C.green, mode:"digits",  stat:"evenodd",   window:5,  threshold:60, tradeWhenOver:"even", tradeWhenUnder:"odd" },
-      { id:"eo_pct",     label:"Even/Odd",          sub:"Percentages", color:C.green, mode:"pct",     stat:"evenodd",   window:50, threshold:60, tradeWhenOver:"even", tradeWhenUnder:"odd" },
-      { id:"ou_digits",  label:"Over/Under",        sub:"Digits",      color:C.green, mode:"digits",  stat:"overunder", window:3,  threshold:60, barrier:5, tradeWhenOver:"over", tradeWhenUnder:"under" },
-      { id:"ou_pct",     label:"Over/Under",        sub:"Percentages", color:C.green, mode:"pct",     stat:"overunder", window:50, threshold:60, barrier:5, tradeWhenOver:"over", tradeWhenUnder:"under" },
+      { id:"eo_digits",  label:"Even/Odd",          sub:"Digits",      color:"#39ff88", mode:"digits",  stat:"evenodd",   window:5,  threshold:60, tradeWhenOver:"even", tradeWhenUnder:"odd" },
+      { id:"eo_pct",     label:"Even/Odd",          sub:"Percentages", color:"#39ff88", mode:"pct",     stat:"evenodd",   window:50, threshold:60, tradeWhenOver:"even", tradeWhenUnder:"odd" },
+      { id:"ou_digits",  label:"Over/Under",        sub:"Digits",      color:"#39ff88", mode:"digits",  stat:"overunder", window:3,  threshold:60, barrier:5, tradeWhenOver:"over", tradeWhenUnder:"under" },
+      { id:"ou_pct",     label:"Over/Under",        sub:"Percentages", color:"#39ff88", mode:"pct",     stat:"overunder", window:50, threshold:60, barrier:5, tradeWhenOver:"over", tradeWhenUnder:"under" },
       { id:"rf_digits",  label:"Rise/Fall",         sub:"Momentum",    color:"#f472b6", mode:"pct",     stat:"risefall",  window:20, threshold:60, tradeWhenOver:"rise", tradeWhenUnder:"fall" },
       { id:"md_pct",     label:"Match/Differ",      sub:"Percentages", color:"#a78bfa", mode:"pct",     stat:"matchdiffer", window:50, threshold:85, tradeWhenOver:"differ", tradeWhenUnder:"match" },
     ];
@@ -758,10 +758,10 @@
     }
 
     const ROBOT_PRESETS = [
-      { id:"ou18", name:"Over 1 / Under 8", desc:"Trades whichever edge setup appears first between Over 1 and Under 8.", tags:["Over 1","Under 8"], type:"overunder", prediction:"over", barrier:1, color:C.green },
-      { id:"ou27", name:"Over 2 / Under 7", desc:"Combines the Over 2 and Under 7 edge triggers into one preset.", tags:["Over 2","Under 7"], type:"overunder", prediction:"over", barrier:2, color:C.green },
-      { id:"ou36", name:"Over 3 / Under 6", desc:"Combines the Over 3 and Under 6 edge triggers into one preset.", tags:["Over 3","Under 6"], type:"overunder", prediction:"over", barrier:3, color:C.green },
-      { id:"ou45", name:"Over 4 / Under 5", desc:"Combines the Over 4 and Under 5 edge triggers into one preset.", tags:["Over 4","Under 5"], type:"overunder", prediction:"over", barrier:4, color:C.green },
+      { id:"ou18", name:"Over 1 / Under 8", desc:"Trades whichever edge setup appears first between Over 1 and Under 8.", tags:["Over 1","Under 8"], type:"overunder", prediction:"over", barrier:1, color:"#39ff88" },
+      { id:"ou27", name:"Over 2 / Under 7", desc:"Combines the Over 2 and Under 7 edge triggers into one preset.", tags:["Over 2","Under 7"], type:"overunder", prediction:"over", barrier:2, color:"#39ff88" },
+      { id:"ou36", name:"Over 3 / Under 6", desc:"Combines the Over 3 and Under 6 edge triggers into one preset.", tags:["Over 3","Under 6"], type:"overunder", prediction:"over", barrier:3, color:"#39ff88" },
+      { id:"ou45", name:"Over 4 / Under 5", desc:"Combines the Over 4 and Under 5 edge triggers into one preset.", tags:["Over 4","Under 5"], type:"overunder", prediction:"over", barrier:4, color:"#39ff88" },
       { id:"eo3", name:"Even/Odd 3", desc:"If last 3 digits sum is even, trade ODD. If odd, trade EVEN.", tags:["Even 3","Odd 3"], type:"evenodd", prediction:"odd", color:"#60a5fa" },
       { id:"eo4", name:"Even/Odd 4", desc:"If last 4 digits sum is even, trade ODD. If odd, trade EVEN.", tags:["Even 4","Odd 4"], type:"evenodd", prediction:"odd", color:"#60a5fa" },
       { id:"eo5", name:"Even/Odd 5", desc:"If last 5 digits sum is even, trade ODD. If odd, trade EVEN.", tags:["Even 5","Odd 5"], type:"evenodd", prediction:"odd", color:"#60a5fa" },
