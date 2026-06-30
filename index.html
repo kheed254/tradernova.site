@@ -835,16 +835,22 @@
 
     function getQuote() {
       if (!selSym) { showToast("Please select an asset first", false); return; }
-      if (!selCon) { showToast("No contract types loaded for this asset yet — try reselecting it, or check market connection", false); return; }
+      if (!selCon) { showToast("No contract types loaded — try reselecting the asset", false); return; }
+      if (authState !== "authed") { showToast("Please log in first to get price quotes", false); return; }
       setPropLoading(true); setProposal(null);
       const needsBarrier = ["DIGITMATCH","DIGITDIFF","DIGITOVER","DIGITUNDER"].includes(selCon.contract_type);
-      const req = { proposal:1, amount:parseFloat(stake)||10, basis:"stake", contract_type:selCon.contract_type, currency:"USD", duration:parseInt(dur)||5, duration_unit:durUnit, underlying_symbol:selSym };
-      if (needsBarrier) req.barrier = digitBarrier;
+      const req = {
+        proposal:1, amount:parseFloat(stake)||10, basis:"stake",
+        contract_type:selCon.contract_type, currency:"USD",
+        duration:parseInt(dur)||5, duration_unit:durUnit,
+        underlying_symbol:selSym,
+      };
+      if (needsBarrier) req.barrier = String(parseInt(digitBarrier)||5);
       console.log("sending proposal request:", req);
       authWs.send(req);
       setTimeout(() => {
         setPropLoading(curr => {
-          if (curr) showToast("No response from server — check console for details", false);
+          if (curr) showToast("Quote timed out — your session may have expired. Try logging out and back in.", false);
           return false;
         });
       }, 8000);
