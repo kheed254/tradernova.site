@@ -682,8 +682,16 @@
     // Bot round trigger — fires next trade when idle & running
     useEffect(() => {
       if (!botRunning || botStatus !== "idle") return;
+      // Small delay to ensure botStateRef is synced after state updates
+      const delay = setTimeout(() => {
       const st = botStateRef.current;
       if (!st.sym) { showToast("Bot: select a market first", false); setBotRunning(false); return; }
+      // Pause & Strike: skip rounds if paused
+      if (activeRobot?.id === "pausestrike" && smartPauseRoundsRef.current > 0) {
+        setSmartPauseRounds(r => Math.max(0, r - 1));
+        setTimeout(() => setBotStatus("idle"), 2000); // wait 2s then retry
+        return;
+      }
       const activePrediction = currentPredictionRef.current;
       const contract_type = st.type === "evenodd"
         ? (activePrediction === "even" ? "DIGITEVEN" : "DIGITODD")
@@ -708,6 +716,8 @@
         });
       }, 10000);
       return () => clearTimeout(timeoutId);
+      }, 150);
+      return () => clearTimeout(delay);
     }, [botRunning, botStatus]);
 
     // Splash screen animation
