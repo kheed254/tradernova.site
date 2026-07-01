@@ -215,6 +215,7 @@
     const [switchingAccount, setSwitchingAccount] = useState(false);
     const [realWarningPending, setRealWarningPending] = useState(null);
     const [accountDropdownOpen, setAccountDropdownOpen] = useState(false);
+    const [settingsOpen, setSettingsOpen] = useState(false);
     const accessTokenRef = useRef(null); // stored for account switching
     const [symbols, setSymbols]     = useState([]);
     const [selSym, setSelSym]       = useState(null);
@@ -248,6 +249,54 @@
     const [scanRunning, setScanRunning] = useState(false);
     const [scanMatchDigit, setScanMatchDigit] = useState(5);
     const [activeRobot, setActiveRobot] = useState(null);
+    // ── Sound & Notification settings ─────────────────────────────────────
+    const [soundEnabled, setSoundEnabled] = useState(() => {
+      try { return localStorage.getItem("tn_sound") !== "off"; } catch { return true; }
+    });
+    const [notifEnabled, setNotifEnabled] = useState(() => {
+      try { return localStorage.getItem("tn_notif") === "on"; } catch { return false; }
+    });
+    useEffect(() => { try { localStorage.setItem("tn_sound", soundEnabled?"on":"off"); } catch {} }, [soundEnabled]);
+    useEffect(() => { try { localStorage.setItem("tn_notif", notifEnabled?"on":"off"); } catch {} }, [notifEnabled]);
+
+    // Web Audio tone generator — no external files needed
+    function playTone(freq, duration, type="sine", vol=0.3, freqEnd=null) {
+      if (!soundEnabled) return;
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, ctx.currentTime);
+        if (freqEnd) osc.frequency.linearRampToValueAtTime(freqEnd, ctx.currentTime + duration);
+        gain.gain.setValueAtTime(vol, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+        osc.start(ctx.currentTime);
+        osc.stop(ctx.currentTime + duration);
+        osc.onended = () => ctx.close();
+      } catch {}
+    }
+
+    function playWin()        { playTone(523, 0.08); setTimeout(()=>playTone(659, 0.08), 80); setTimeout(()=>playTone(784, 0.15), 160); }
+    function playLoss()       { playTone(330, 0.1); setTimeout(()=>playTone(247, 0.2), 100); }
+    function playTakeProfit() { [0,80,160,240].forEach((d,i)=>setTimeout(()=>playTone([523,659,784,1047][i],0.12,"sine",0.4),d)); }
+    function playStopLoss()   { playTone(220, 0.15,"sawtooth",0.3,180); setTimeout(()=>playTone(165,0.3,"sawtooth",0.25,130),150); }
+    function playStart()      { playTone(440, 0.06); setTimeout(()=>playTone(550, 0.1), 70); }
+
+    function sendNotif(title, body, icon="🤖") {
+      if (!notifEnabled) return;
+      try {
+        if (Notification.permission === "granted") {
+          new Notification("TraderNova — "+title, { body, icon:"https://tradernova-site.vercel.app/favicon.ico" });
+        } else if (Notification.permission !== "denied") {
+          Notification.requestPermission().then(p => {
+            if (p === "granted") new Notification("TraderNova — "+title, { body });
+          });
+        }
+      } catch {}
+    }
+
     const [sessionHistory, setSessionHistoryRaw] = useState(() => {
       try {
         const saved = localStorage.getItem("tn_session_history");
@@ -616,17 +665,24 @@
             // Check stop conditions
             if (newPL >= st.takeProfit) {
               showToast(`🎯 Take-profit hit! +$${newPL.toFixed(2)}`, true);
+              playTakeProfit();
+              sendNotif("Take-profit hit! 🎯", `+$${newPL.toFixed(2)} — ${botName} on ${st.sym}`);
               setBotRunning(false); setBotStatus("idle"); saveSession("Take-profit");
             } else if (newPL <= -st.stopLoss) {
               showToast(`🛑 Stop-loss hit. ${newPL.toFixed(2)}`, false);
+              playStopLoss();
+              sendNotif("Stop-loss hit 🛑", `$${newPL.toFixed(2)} — ${botName} on ${st.sym}`);
               setBotRunning(false); setBotStatus("idle"); saveSession("Stop-loss");
             } else if (!won && rawNextStake > st.maxStake) {
               showToast(`⚠️ Max stake ($${st.maxStake.toFixed(2)}) reached — bot stopped for safety.`, false);
+              playStopLoss();
+              sendNotif("Max stake reached ⚠️", `Bot stopped safely. P/L: $${newPL.toFixed(2)}`);
               setBotRunning(false); setBotStatus("idle"); saveSession("Max stake");
-            } else if (botRunningRef.current) {
-              setBotStatus("idle");
             } else {
-              setBotStatus("idle");
+              // Per-trade sounds
+              won ? playWin() : playLoss();
+              if (botRunningRef.current) setBotStatus("idle");
+              else setBotStatus("idle");
             }
           }
           return;
@@ -1149,8 +1205,7 @@
         setBotBarrier(freq.indexOf(Math.max(...freq)));
       }
       setBotRunning(true);
-    }
-    function stopBot() {
+      playStart();
       setBotRunning(false);
       setBotStatus("idle");
       showToast("Bot stopped", true);
@@ -1401,6 +1456,68 @@
             } }, label)
           )
         ),
+        // Header right: settings + account switcher
+        e("div", { style:{display:"flex",alignItems:"center",gap:8} },
+          // Settings button
+          e("div", { style:{position:"relative"} },
+            e("button", { style:{background:"transparent",border:`1px solid ${settingsOpen?C.green:C.border}`,borderRadius:7,padding:"5px 10px",cursor:"pointer",color:settingsOpen?C.green:C.muted,fontSize:14}, onClick:()=>{ setSettingsOpen(o=>!o); setAccountDropdownOpen(false); } }, "⚙"),
+            settingsOpen && e(React.Fragment, null,
+              e("div", { style:{position:"fixed",inset:0,zIndex:999}, onClick:()=>setSettingsOpen(false) }),
+              e("div", { style:{position:"absolute",right:0,top:"calc(100% + 8px)",background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,minWidth:260,zIndex:1000,padding:20,boxShadow:"0 8px 32px rgba(0,0,0,0.5)"} },
+                e("div", { style:{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:1,marginBottom:16} }, "SETTINGS"),
+
+                // Sound toggle
+                e("div", { style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,paddingBottom:14,borderBottom:`1px solid ${C.border}`} },
+                  e("div", null,
+                    e("div", { style:{fontSize:13,fontWeight:600,color:C.text} }, "🔊 Sound Alerts"),
+                    e("div", { style:{fontSize:11,color:C.muted,marginTop:2} }, "Win/loss tones, take-profit chime")
+                  ),
+                  e("button", { style:{
+                    width:44,height:24,borderRadius:12,border:"none",cursor:"pointer",position:"relative",
+                    background: soundEnabled ? C.green : C.border, transition:"background 0.2s"
+                  }, onClick:()=>{
+                    const next = !soundEnabled;
+                    setSoundEnabled(next);
+                    try { localStorage.setItem("tn_sound", next?"on":"off"); } catch {}
+                    if (next) setTimeout(() => playAlert(), 50);
+                  } },
+                    e("div", { style:{width:18,height:18,borderRadius:"50%",background:"white",position:"absolute",top:3,left:soundEnabled?23:3,transition:"left 0.2s"} })
+                  )
+                ),
+
+                // Notifications toggle
+                e("div", { style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,paddingBottom:14,borderBottom:`1px solid ${C.border}`} },
+                  e("div", null,
+                    e("div", { style:{fontSize:13,fontWeight:600,color:C.text} }, "🔔 Push Notifications"),
+                    e("div", { style:{fontSize:11,color:C.muted,marginTop:2} }, "Alerts when bot stops")
+                  ),
+                  e("button", { style:{
+                    width:44,height:24,borderRadius:12,border:"none",cursor:"pointer",position:"relative",
+                    background: notifEnabled ? C.green : C.border, transition:"background 0.2s"
+                  }, onClick:()=>{
+                    if (!notifEnabled) {
+                      requestNotifPermission();
+                    } else {
+                      setNotifEnabled(false);
+                      try { localStorage.setItem("tn_notif", "off"); } catch {}
+                    }
+                  } },
+                    e("div", { style:{width:18,height:18,borderRadius:"50%",background:"white",position:"absolute",top:3,left:notifEnabled?23:3,transition:"left 0.2s"} })
+                  )
+                ),
+
+                // Test buttons
+                e("div", { style:{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:1,marginBottom:10} }, "TEST SOUNDS"),
+                e("div", { style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8} },
+                  e("button", { style:{padding:"7px 0",borderRadius:7,border:`1px solid ${C.green}`,background:"transparent",color:C.green,fontSize:11,fontWeight:600,cursor:"pointer"}, onClick:playWin }, "▶ Win"),
+                  e("button", { style:{padding:"7px 0",borderRadius:7,border:`1px solid ${C.red}`,background:"transparent",color:C.red,fontSize:11,fontWeight:600,cursor:"pointer"}, onClick:playLoss }, "▶ Loss"),
+                  e("button", { style:{padding:"7px 0",borderRadius:7,border:`1px solid ${C.amber}`,background:"transparent",color:C.amber,fontSize:11,fontWeight:600,cursor:"pointer"}, onClick:playTakeProfit }, "▶ Take-profit"),
+                  e("button", { style:{padding:"7px 0",borderRadius:7,border:`1px solid ${C.muted}`,background:"transparent",color:C.muted,fontSize:11,fontWeight:600,cursor:"pointer"}, onClick:playStopLoss }, "▶ Stop-loss")
+                )
+              )
+            )
+          ),
+
         // Account switcher (top-right)
         authState === "authed"
           ? e("div", { style:{position:"relative"} },
@@ -1489,6 +1606,7 @@
               )
             )
           : e("button", { style:{background:C.cyan,color:C.sidebar,border:"none",borderRadius:8,padding:"7px 14px",fontSize:12,fontWeight:700,cursor:"pointer"}, onClick:redirectToOAuth }, "🔑 Login")
+        ) // closes header right div
       ),
 
       // ── Body (sidebar + main) ──
