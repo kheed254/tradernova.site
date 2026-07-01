@@ -1088,57 +1088,45 @@
 
     // ── Nova AI Signal Engine ─────────────────────────────────────────────────
     function evaluateNovaSignal(digits, prices) {
-      if (digits.length < 10) return null;
+      if (digits.length < 5) return null;
 
-      const recent20 = digits.slice(-20);
       const recent10 = digits.slice(-10);
       const recent5  = digits.slice(-5);
 
-      // ── Signal 1: Even/Odd momentum bias (50%+ threshold) ─────────────────
-      const evenPct20 = recent20.length ? (recent20.filter(d=>d%2===0).length/recent20.length)*100 : 50;
-      const evenPct5  = recent5.length  ? (recent5.filter(d=>d%2===0).length/recent5.length)*100  : 50;
-      const oePrediction = evenPct20 > 52 ? "odd"
-                         : evenPct20 < 48 ? "even"
-                         : evenPct5  > 55 ? "odd"
-                         : evenPct5  < 45 ? "even"
-                         : null;
-      const oeStrength = Math.abs(evenPct20 - 50) * 2;
+      // Signal 1: last 10 even/odd balance
+      const evenCount = recent10.filter(d=>d%2===0).length;
+      const oddCount  = recent10.length - evenCount;
+      const s1pred = evenCount >= oddCount ? "odd" : "even";
 
-      // ── Signal 2: Streak detection (2+ streak) ────────────────────────────
-      let streak = 1;
-      const lastType = recent10[recent10.length-1] % 2 === 0 ? "even" : "odd";
-      for (let i = recent10.length - 2; i >= 0; i--) {
-        if ((recent10[i] % 2 === 0 ? "even" : "odd") === lastType) streak++;
+      // Signal 2: last 5 streak
+      const lastType = recent5[recent5.length-1]%2===0 ? "even" : "odd";
+      let streak = 0;
+      for (let i=recent5.length-1;i>=0;i--) {
+        if ((recent5[i]%2===0?"even":"odd")===lastType) streak++;
         else break;
       }
-      const streakPrediction = streak >= 2 ? (lastType === "even" ? "odd" : "even") : null;
-      const streakStrength = Math.min(streak * 15, 60);
+      const s2pred = streak >= 2 ? (lastType==="even"?"odd":"even") : s1pred;
 
-      // ── Signal 3: Recent majority (any imbalance) ─────────────────────────
-      const evenCount10 = recent10.filter(d=>d%2===0).length;
-      const oddCount10  = recent10.filter(d=>d%2!==0).length;
-      const freqBias = evenCount10 > oddCount10 ? "odd" : evenCount10 < oddCount10 ? "even" : null;
-      const freqStrength = Math.abs(evenCount10 - oddCount10) * 8;
+      // Signal 3: simple majority of last 5
+      const e5 = recent5.filter(d=>d%2===0).length;
+      const s3pred = e5 >= 3 ? "odd" : "even";
 
-      const signals = [
-        { name:"Even/Odd Momentum", value:evenPct20.toFixed(0)+"%", prediction:oePrediction, active:!!oePrediction, strength:oeStrength },
-        { name:"Streak Pattern",    value:streak+"x "+lastType, prediction:streakPrediction, active:streak>=2, strength:streakStrength },
-        { name:"Digit Frequency",   value:evenCount10+"/"+oddCount10, prediction:freqBias, active:!!freqBias, strength:freqStrength },
-      ];
+      // Always trade — just pick the majority vote
+      const evenVotes = [s1pred,s2pred,s3pred].filter(v=>v==="even").length;
+      const oddVotes  = 3 - evenVotes;
+      const prediction = evenVotes >= oddVotes ? "even" : "odd";
+      const confidence = Math.round(50 + Math.abs(evenVotes-oddVotes)*15 + streak*5);
 
-      const activeSigs = signals.filter(s => s.active && s.prediction);
-      // Only need 2 signals active
-      if (activeSigs.length < 2) return null;
-
-      const evenVotes = activeSigs.filter(s => s.prediction === "even").length;
-      const oddVotes  = activeSigs.filter(s => s.prediction === "odd").length;
-      if (evenVotes === oddVotes) return null;
-
-      const winningPred = evenVotes > oddVotes ? "even" : "odd";
-      const avgStrength = activeSigs.reduce((a,s)=>a+s.strength,0) / activeSigs.length;
-      const confidence = Math.min(Math.round(50 + avgStrength * 0.5), 99);
-
-      return { prediction:winningPred, confidence, signals, votes:Math.max(evenVotes, oddVotes) };
+      return {
+        prediction,
+        confidence: Math.min(confidence, 99),
+        signals: [
+          { name:"10-tick Balance",  value:evenCount+"/"+oddCount, prediction:s1pred, active:true, strength:Math.abs(evenCount-oddCount)*10 },
+          { name:"Streak Pattern",   value:streak+"x "+lastType,  prediction:s2pred, active:streak>=2, strength:streak*15 },
+          { name:"5-tick Majority",  value:e5+"/"+(5-e5),         prediction:s3pred, active:true, strength:Math.abs(e5-2.5)*20 },
+        ],
+        votes: Math.max(evenVotes, oddVotes),
+      };
     }
 
     async function startSignals(sym, tf) {
