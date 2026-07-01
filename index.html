@@ -409,6 +409,7 @@
     const botTradesRef = useRef([]);
     useEffect(() => { botTradesRef.current = botTrades; }, [botTrades]);
     const [botStatus, setBotStatus]     = useState("idle"); // idle | waiting_proposal | in_trade
+    const [botTick, setBotTick]         = useState(0); // increments to force round trigger re-run
     const botRunningRef = useRef(false);
     const botStateRef   = useRef({}); // holds latest bot config + running totals for closures
     const currentPredictionRef = useRef("even"); // tracks active prediction across a session (for recovery switching)
@@ -875,10 +876,10 @@
         const signal = evaluateNovaSignal(digits, scanPrices);
         setNovaSignal(signal);
         if (!signal) {
-          // No confluence — skip this round, wait for next tick
           setNovaStatus("scanning");
           setNovaSkipped(s => s + 1);
-          setTimeout(() => setBotStatus("idle"), 500);
+          // Use botTick to force re-run even when botStatus stays "idle"
+          setTimeout(() => setBotTick(t => t + 1), 800);
           return;
         }
         setNovaStatus("confirmed");
@@ -929,7 +930,7 @@
       return () => clearTimeout(timeoutId);
       }, 800);
       return () => clearTimeout(delay);
-    }, [botRunning, botStatus]);
+    }, [botRunning, botStatus, botTick]);
 
     // Splash screen animation
     const SPLASH_STEPS = [
