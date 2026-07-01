@@ -693,9 +693,17 @@
         return;
       }
       const activePrediction = currentPredictionRef.current;
-      const contract_type = st.type === "evenodd"
-        ? (activePrediction === "even" ? "DIGITEVEN" : "DIGITODD")
-        : (activePrediction === "over" ? "DIGITOVER" : "DIGITUNDER");
+      // Determine contract type — handle special smart bot types
+      let contract_type;
+      if (activeRobot?.id === "over0") {
+        contract_type = "DIGITDIFF"; // DIGITDIFF barrier=0 = last digit ≠ 0 = ~90% win rate
+      } else if (activeRobot?.id === "sniper") {
+        contract_type = "DIGITDIFF"; // Differ against hot digit
+      } else {
+        contract_type = st.type === "evenodd"
+          ? (activePrediction === "even" ? "DIGITEVEN" : "DIGITODD")
+          : (activePrediction === "over" ? "DIGITOVER" : "DIGITUNDER");
+      }
       const req = {
         proposal: 1, amount: st.stake, basis: "stake",
         contract_type, currency: "USD", duration: 1, duration_unit: "t",
@@ -957,18 +965,26 @@
       { id:"eo5", name:"Even/Odd 5", desc:"If last 5 digits sum is even, trade ODD. If odd, trade EVEN.", tags:["Even 5","Odd 5"], type:"evenodd", prediction:"odd", color:"#60a5fa" },
       { id:"eo6", name:"Even/Odd 6", desc:"If last 6 digits sum is even, trade ODD. If odd, trade EVEN.", tags:["Even 6","Odd 6"], type:"evenodd", prediction:"odd", color:"#60a5fa" },
       // Smart bots with entry conditions and recovery
-      { id:"over0", name:"Over 0 Recovery", desc:"Trades DIGITOVER 0 — last digit must be 1-9 (≈90% win rate). Doubles stake after a loss, resets after a win. High frequency, consistent small gains.", tags:["Over 0","Recovery"], type:"overunder", prediction:"over", barrier:0, color:"#ffb830", smart:true, badge:"HIGH WIN RATE" },
+      { id:"over0", name:"Over 0 Recovery", desc:"Trades DIGITDIFF 0 — wins when last digit is NOT 0 (digits 1-9 win ≈90% of the time). Doubles stake after a loss, resets after a win.", tags:["Differ 0","Recovery"], type:"differ0", prediction:"differ", barrier:0, color:"#ffb830", smart:true, badge:"~90% WIN RATE" },
       { id:"sniper", name:"Digit Sniper", desc:"Scans last 15 digits for the hottest digit (3+ appearances). Trades DIFFER against it — mean reversion logic. Only fires when a strong signal is detected.", tags:["Differ","Mean Reversion"], type:"sniper", prediction:"differ", color:"#a78bfa", smart:true, badge:"SMART ENTRY" },
       { id:"switcher", name:"Even/Odd Switcher", desc:"Starts trading Even. Auto-flips to Odd after 2 consecutive losses, switches back after a win. Doubles stake on each loss sequence, resets on win.", tags:["Even","Odd","Auto-Switch"], type:"switcher", prediction:"even", color:"#4d9fff", smart:true, badge:"AUTO-SWITCH" },
       { id:"pausestrike", name:"Pause & Strike", desc:"Sits out 2 rounds after 3 consecutive losses, then re-enters with 1.5× stake. Avoids chasing losses during bad streaks.", tags:["Pause","Recovery"], type:"pausestrike", prediction:"even", color:"#ff4d6a", smart:true, badge:"SMART RECOVERY" },
     ];
 
     function applyPreset(preset) {
-      // Map smart bot types to underlying Bulk Trader config
-      if (preset.type === "overunder" || preset.type === "sniper") {
+      if (preset.type === "overunder") {
         setBotType("overunder");
-        setBotPrediction(preset.prediction === "differ" ? "over" : preset.prediction);
+        setBotPrediction(preset.prediction);
         if (preset.barrier != null) setBotBarrier(preset.barrier);
+      } else if (preset.type === "differ0") {
+        // DIGITDIFF barrier=0: wins when last digit ≠ 0 (~90% win rate)
+        setBotType("overunder"); // reuse overunder slot but will override contract_type
+        setBotPrediction("over"); // placeholder, overridden in round trigger
+        setBotBarrier(0);
+      } else if (preset.type === "sniper") {
+        setBotType("overunder");
+        setBotPrediction("over");
+        setBotBarrier(5);
       } else if (preset.type === "evenodd" || preset.type === "switcher" || preset.type === "pausestrike") {
         setBotType("evenodd");
         setBotPrediction(preset.prediction || "even");
@@ -2440,13 +2456,23 @@
 
         tab === "robotrun" && activeRobot && (() => {
           const isOU = activeRobot.type === "overunder";
+          const isDiffer0 = activeRobot.id === "over0";
           // Use the scanner's live digit feed if it's already running on the same symbol; otherwise show a hint to pick a market.
           const liveDigits = (botSym && scanSym === botSym) ? scanTicks.slice(-15) : ticks[botSym] ? ticks[botSym].slice(-15).map(q => Number(String(q).split(".")[0].slice(-1))) : [];
           const recentForTrigger = scanSym === botSym ? scanTicks.slice(-20) : [];
           const trgTotal = recentForTrigger.length || 1;
 
           let leftLabel, rightLabel, leftDesc, rightDesc, leftPct, rightPct, leftTriggered, rightTriggered, leftColor, rightColor;
-          if (isOU) {
+          if (isDiffer0) {
+            const differCount = recentForTrigger.filter(d => d !== 0).length;
+            const matchCount  = recentForTrigger.filter(d => d === 0).length;
+            leftLabel = "Differ 0"; rightLabel = "Match 0";
+            leftDesc = "If last digit ≠ 0 (wins)"; rightDesc = "If last digit = 0 (loses)";
+            leftPct = ((differCount/trgTotal)*100).toFixed(0); rightPct = ((matchCount/trgTotal)*100).toFixed(0);
+            leftTriggered = recentForTrigger.length > 0 && recentForTrigger[recentForTrigger.length-1] !== 0;
+            rightTriggered = recentForTrigger.length > 0 && recentForTrigger[recentForTrigger.length-1] === 0;
+            leftColor = C.green; rightColor = C.red;
+          } else if (isOU) {
             const overCount = recentForTrigger.filter(d => d > activeRobot.barrier).length;
             const underBarrier = 9 - activeRobot.barrier;
             const underCount = recentForTrigger.filter(d => d < underBarrier).length;
@@ -2578,7 +2604,7 @@
                     " • Trading DIFFER against it"
                   ),
                   activeRobot.id==="over0" && e("div", { style:{background:C.raised,border:`1px solid ${C.border}`,borderRadius:8,padding:"8px 12px",fontSize:12,color:C.text} },
-                    "Trading DIGITOVER 0 — wins if last digit is 1-9 (", e("strong",{style:{color:C.green}}, "~90% win rate"), ")"
+                    "Trading DIGITDIFF 0 — wins if last digit is 1-9 (", e("strong",{style:{color:C.green}}, "~90% win rate"), ")"
                   )
                 )
               )
