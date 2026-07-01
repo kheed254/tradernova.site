@@ -76,7 +76,7 @@
   const AUTH_URL      = "https://auth.deriv.com/oauth2/auth";
 
   // ⚠️ Replace with your actual registered client_id from developers.deriv.com
-  const OAUTH_CLIENT_ID    = "33B0MY3PLWPg4vDGcGwIG";
+  const OAUTH_CLIENT_ID    = "YOUR_CLIENT_ID";
   const OAUTH_REDIRECT_URI = window.location.origin + window.location.pathname;
 
   function fmt(n, d=5) { return n == null ? "—" : Number(n).toFixed(d); }
@@ -270,6 +270,12 @@
     const [smartPauseRounds, setSmartPauseRounds]   = useState(0);
     const [smartSwitcherPred, setSmartSwitcherPred] = useState("even");
     const [smartSwitcherLosses, setSmartSwitcherLosses] = useState(0);
+    const [smartOUPred, setSmartOUPred]             = useState("over"); // current Smart OU prediction
+    const [smartOURecovering, setSmartOURecovering] = useState(false);  // in recovery mode
+    const smartOUPredRef       = useRef("over");
+    const smartOURecoveringRef = useRef(false);
+    useEffect(() => { smartOUPredRef.current = smartOUPred; }, [smartOUPred]);
+    useEffect(() => { smartOURecoveringRef.current = smartOURecovering; }, [smartOURecovering]);
     const smartConsecLossesRef = useRef(0);
     const smartPauseRoundsRef  = useRef(0);
     const smartSwitcherPredRef = useRef("even");
@@ -490,7 +496,41 @@
             // ── Smart bot execution logic ──────────────────────────────────
             const robot = activeRobot;
             if (robot?.smart) {
-              if (robot.id === "over0") {
+              if (robot.id === "smartou") {
+                // Smart Over/Under: analyze market and switch sides adaptively after a loss
+                const barrier = st.barrier ?? 3;
+                if (!won) {
+                  // Analyze last 10 digits to find market bias
+                  const recent = scanTicks.slice(-10);
+                  const overCount  = recent.filter(d => d > barrier).length;
+                  const underCount = recent.filter(d => d < barrier).length;
+                  // Switch to whichever side has MORE occurrences (mean reversion)
+                  // If market has been going OVER a lot, it may revert — trade UNDER
+                  // If market has been going UNDER a lot, it may revert — trade OVER
+                  let newPred;
+                  if (overCount > underCount) {
+                    newPred = "under"; // majority over → predict under next
+                  } else if (underCount > overCount) {
+                    newPred = "over";  // majority under → predict over next
+                  } else {
+                    // Balanced — flip from current
+                    newPred = smartOUPredRef.current === "over" ? "under" : "over";
+                  }
+                  setSmartOUPred(newPred);
+                  smartOUPredRef.current = newPred;
+                  setSmartOURecovering(true);
+                  smartOURecoveringRef.current = true;
+                  showToast(`Smart OU: switched to ${newPred.toUpperCase()} for recovery (${overCount} over / ${underCount} under in last 10)`, true);
+                } else {
+                  // Won — reset to initial Over prediction, exit recovery mode
+                  if (smartOURecoveringRef.current) {
+                    setSmartOUPred("over");
+                    smartOUPredRef.current = "over";
+                    setSmartOURecovering(false);
+                    smartOURecoveringRef.current = false;
+                  }
+                }
+              } else if (robot.id === "over0") {
                 // Over 0: barrier stays 0, just double on loss reset on win (already handled by Martingale)
                 // No extra logic needed — Martingale handles it
               } else if (robot.id === "sniper") {
@@ -718,6 +758,10 @@
         contract_type = "DIGITDIFF"; // DIGITDIFF barrier=0 = last digit ≠ 0 = ~90% win rate
       } else if (activeRobot?.id === "sniper") {
         contract_type = "DIGITDIFF"; // Differ against hot digit
+      } else if (activeRobot?.id === "smartou") {
+        // Use current smart OU prediction (over/under), set dynamically
+        const pred = smartOUPredRef.current;
+        contract_type = pred === "over" ? "DIGITOVER" : "DIGITUNDER";
       } else {
         contract_type = st.type === "evenodd"
           ? (activePrediction === "even" ? "DIGITEVEN" : "DIGITODD")
@@ -991,6 +1035,7 @@
       { id:"eo5", name:"Even/Odd 5", desc:"If last 5 digits sum is even, trade ODD. If odd, trade EVEN.", tags:["Even 5","Odd 5"], type:"evenodd", prediction:"odd", color:"#60a5fa" },
       { id:"eo6", name:"Even/Odd 6", desc:"If last 6 digits sum is even, trade ODD. If odd, trade EVEN.", tags:["Even 6","Odd 6"], type:"evenodd", prediction:"odd", color:"#60a5fa" },
       // Smart bots with entry conditions and recovery
+      { id:"smartou", name:"Smart Over/Under", desc:"Trades Over 2-5 (user picks barrier). After a loss, analyzes last 10 digits and auto-switches to the opposite side that has market edge. Recovers with 2.2× stake.", tags:["Over","Under","Auto-Switch","Recovery"], type:"smartou", prediction:"over", barrier:3, color:"#39ff88", smart:true, badge:"MARKET ADAPTIVE" },
       { id:"over0", name:"Over 0 Recovery", desc:"Trades DIGITDIFF 0 — wins when last digit is NOT 0 (digits 1-9 win ≈90% of the time). Doubles stake after a loss, resets after a win.", tags:["Differ 0","Recovery"], type:"differ0", prediction:"differ", barrier:0, color:"#ffb830", smart:true, badge:"~90% WIN RATE" },
       { id:"sniper", name:"Digit Sniper", desc:"Scans last 15 digits for the hottest digit (3+ appearances). Trades DIFFER against it — mean reversion logic. Only fires when a strong signal is detected.", tags:["Differ","Mean Reversion"], type:"sniper", prediction:"differ", color:"#a78bfa", smart:true, badge:"SMART ENTRY" },
       { id:"switcher", name:"Even/Odd Switcher", desc:"Starts trading Even. Auto-flips to Odd after 2 consecutive losses, switches back after a win. Doubles stake on each loss sequence, resets on win.", tags:["Even","Odd","Auto-Switch"], type:"switcher", prediction:"even", color:"#4d9fff", smart:true, badge:"AUTO-SWITCH" },
@@ -1003,10 +1048,13 @@
         setBotPrediction(preset.prediction);
         if (preset.barrier != null) setBotBarrier(preset.barrier);
       } else if (preset.type === "differ0") {
-        // DIGITDIFF barrier=0: wins when last digit ≠ 0 (~90% win rate)
-        setBotType("overunder"); // reuse overunder slot but will override contract_type
-        setBotPrediction("over"); // placeholder, overridden in round trigger
+        setBotType("overunder");
+        setBotPrediction("over");
         setBotBarrier(0);
+      } else if (preset.type === "smartou") {
+        setBotType("overunder");
+        setBotPrediction("over");
+        if (preset.barrier != null) setBotBarrier(preset.barrier);
       } else if (preset.type === "sniper") {
         setBotType("overunder");
         setBotPrediction("over");
@@ -1061,6 +1109,10 @@
       setSmartPauseRounds(0);
       setSmartSwitcherPred(botPrediction);
       setSmartSwitcherLosses(0);
+      setSmartOUPred("over");
+      setSmartOURecovering(false);
+      smartOUPredRef.current = "over";
+      smartOURecoveringRef.current = false;
       smartConsecLossesRef.current = 0;
       smartPauseRoundsRef.current = 0;
       smartSwitcherPredRef.current = botPrediction;
@@ -2481,7 +2533,7 @@
         })(),
 
         tab === "robotrun" && activeRobot && (() => {
-          const isOU = activeRobot.type === "overunder";
+          const isOU = activeRobot.type === "overunder" || activeRobot.type === "smartou";
           const isDiffer0 = activeRobot.id === "over0";
           // Use the scanner's live digit feed if it's already running on the same symbol; otherwise show a hint to pick a market.
           const liveDigits = (botSym && scanSym === botSym) ? scanTicks.slice(-15) : ticks[botSym] ? ticks[botSym].slice(-15).map(q => Number(String(q).split(".")[0].slice(-1))) : [];
@@ -2628,6 +2680,17 @@
                   activeRobot.id==="sniper" && e("div", { style:{background:C.raised,border:`1px solid ${C.border}`,borderRadius:8,padding:"8px 12px",fontSize:12,color:C.text} },
                     "Hot digit: ", e("strong",{style:{color:"#a78bfa"}}, botBarrier),
                     " • Trading DIFFER against it"
+                  ),
+                  activeRobot.id==="smartou" && e("div", { style:{display:"flex",flexDirection:"column",gap:6} },
+                    e("div", { style:{background:C.raised,border:`1px solid ${smartOURecovering?C.amber:C.border}`,borderRadius:8,padding:"8px 12px",fontSize:12,color:C.text} },
+                      "Current side: ", e("strong",{style:{color:smartOUPred==="over"?C.green:C.red}}, smartOUPred.toUpperCase()),
+                      " | Barrier: ", e("strong",{style:{color:C.cyan}}, botBarrier),
+                      " | ", e("strong",{style:{color:smartOURecovering?C.amber:C.muted}}, smartOURecovering?"RECOVERY MODE":"Normal"),
+                    ),
+                    e("div", { style:{display:"flex",gap:8,alignItems:"center",marginTop:4} },
+                      e("span",{style:{fontSize:11,color:C.muted}},"Barrier:"),
+                      [2,3,4,5].map(b => e("button", { key:b, style:{padding:"3px 10px",borderRadius:5,border:`1px solid ${botBarrier===b?C.green:C.border}`,background:botBarrier===b?C.raised:"transparent",color:botBarrier===b?C.green:C.muted,fontSize:11,fontWeight:600,cursor:"pointer"}, onClick:()=>setBotBarrier(b) }, b))
+                    )
                   ),
                   activeRobot.id==="over0" && e("div", { style:{background:C.raised,border:`1px solid ${C.border}`,borderRadius:8,padding:"8px 12px",fontSize:12,color:C.text} },
                     "Trading DIGITDIFF 0 — wins if last digit is 1-9 (", e("strong",{style:{color:C.green}}, "~90% win rate"), ")"
