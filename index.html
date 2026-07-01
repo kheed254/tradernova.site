@@ -1646,94 +1646,110 @@
       e("main", { style:{flex:1,overflow:"auto",background:C.bg} },
 
         // ── DASHBOARD TAB ──────────────────────────────────────────────────────
-        tab === "dashboard" && e("div", { style:{minHeight:"100%",display:"flex",flexDirection:"column",width:"100%"} },
-
-          // ── Hero section ──
-          e("div", { style:{
-            background:"linear-gradient(135deg, #060d1a 0%, #0a1628 50%, #060d1a 100%)",
-            borderBottom:`1px solid ${C.border}`,
-            padding:"48px 40px 40px",
-            position:"relative",
-            overflow:"hidden",
-            width:"100%",
-            boxSizing:"border-box",
-          } },
-            // Background glow
-            e("div", { style:{position:"absolute",top:-60,right:-60,width:300,height:300,borderRadius:"50%",background:"radial-gradient(circle, rgba(34,211,238,0.06) 0%, transparent 70%)",pointerEvents:"none"} }),
-
-            authState === "authed"
-              ? e("div", null,
-                  e("div", { style:{fontSize:13,color:C.muted,marginBottom:8,letterSpacing:0.5} }, new Date().toLocaleDateString("en-US",{weekday:"long",year:"numeric",month:"long",day:"numeric"})),
-                  e("h1", { style:{fontSize:32,fontWeight:900,margin:"0 0 8px",letterSpacing:-1,color:C.text} },
-                    "Hello ", e("span",{style:{color:C.cyan}}, activeAccount?.loginid || balance?.loginid || "Trader"), " 👋"
-                  ),
-                  e("p", { style:{color:C.muted,fontSize:14,fontStyle:"italic",margin:"0 0 28px"} }, '"The trend is your friend — until it ends."'),
-                  e("div", { style:{display:"flex",gap:20,flexWrap:"wrap"} },
-                    e("div", null,
-                      e("div", { style:{fontSize:11,color:C.muted,letterSpacing:1,marginBottom:4} }, (activeAccount?.account_type==="real"?"⚠ REAL":"DEMO")+" BALANCE"),
-                      e("div", { style:{fontSize:28,fontFamily:"monospace",fontWeight:900,color:activeAccount?.account_type==="real"?"#fca5a5":C.cyan} }, "$"+fmtMoney(balance?.balance))
-                    ),
-                    e("div", { style:{width:1,background:C.border,alignSelf:"stretch"} }),
-                    e("div", null,
-                      e("div", { style:{fontSize:11,color:C.muted,letterSpacing:1,marginBottom:4} }, "SESSION P/L"),
-                      e("div", { style:{fontSize:28,fontFamily:"monospace",fontWeight:900,color:botPL>=0?C.green:C.red} }, (botPL>=0?"+":"")+"$"+botPL.toFixed(2))
-                    ),
-                    e("div", { style:{width:1,background:C.border,alignSelf:"stretch"} }),
-                    e("div", null,
-                      e("div", { style:{fontSize:11,color:C.muted,letterSpacing:1,marginBottom:4} }, "SESSION TRADES"),
-                      e("div", { style:{fontSize:28,fontFamily:"monospace",fontWeight:900,color:C.text} }, botTrades.length + speedbots.reduce((s,b)=>s+(b.trades||0),0))
-                    )
-                  )
-                )
-              : e("div", null,
-                  e("h1", { style:{fontSize:32,fontWeight:900,margin:"0 0 8px",letterSpacing:-1} }, "Welcome to ", e("span",{style:{color:C.cyan}}, "TraderNova")),
-                  e("p", { style:{color:C.muted,fontSize:14,fontStyle:"italic",margin:"0 0 24px"} }, '"The trend is your friend — until it ends."'),
-                  e("button", { style:{background:C.cyan,color:C.sidebar,border:"none",borderRadius:10,padding:"13px 28px",fontSize:15,fontWeight:800,cursor:"pointer"}, onClick:redirectToOAuth }, "🔑 Login with Deriv")
-                )
+        tab === "dashboard" && e("div", { style:{
+          minHeight:"100%", display:"flex", flexDirection:"column", width:"100%",
+          background:"linear-gradient(160deg, #0a0e1a 0%, #0d1528 40%, #0a1020 100%)",
+          position:"relative", overflow:"hidden",
+        } },
+          // Star/particle background
+          e("div", { style:{position:"absolute",inset:0,pointerEvents:"none",zIndex:0,overflow:"hidden"} },
+            [...Array(40)].map((_,i) => e("div", { key:i, style:{
+              position:"absolute",
+              left: (((i*137.5)%100)).toFixed(1)+"%",
+              top:  (((i*97.3+13)%100)).toFixed(1)+"%",
+              width: i%5===0?2:1, height: i%5===0?2:1,
+              borderRadius:"50%",
+              background: i%3===0?"#39ff88":i%3===1?"#4d9fff":"#ffffff",
+              opacity: 0.15 + (i%4)*0.08,
+            } }))
           ),
 
-          // ── Quick Actions ──
-          e("div", { style:{padding:"32px 40px",flex:1} },
-            e("div", { style:{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:2,marginBottom:20,textAlign:"center"} }, "QUICK ACTIONS"),
-            e("div", { style:{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:16,marginBottom:32} },
+          // Hero section
+          e("div", { style:{
+            flex:1, display:"flex", flexDirection:"column", alignItems:"center",
+            justifyContent:"center", padding:"40px 40px 0", position:"relative", zIndex:1,
+            textAlign:"center",
+          } },
+            authState === "authed"
+              ? e(React.Fragment, null,
+                  e("h1", { style:{
+                    fontSize:38, fontWeight:900, color:"#ffffff", margin:"0 0 12px",
+                    letterSpacing:-1, lineHeight:1.1,
+                  } },
+                    "Hello ", activeAccount?.loginid || balance?.loginid || "Trader", " 👋"
+                  ),
+                  e("p", { style:{
+                    fontSize:14, color:"#6b7a9e", fontStyle:"italic",
+                    margin:"0 0 48px", maxWidth:500,
+                  } }, '"Risk comes from not knowing what you\'re doing." — Warren Buffett')
+                )
+              : e(React.Fragment, null,
+                  e("h1", { style:{fontSize:38,fontWeight:900,color:"#ffffff",margin:"0 0 12px",letterSpacing:-1} }, "Welcome to TraderNova 👋"),
+                  e("p", { style:{fontSize:14,color:"#6b7a9e",fontStyle:"italic",margin:"0 0 32px"} }, '"The trend is your friend — until it ends."'),
+                  e("button", { style:{background:C.green,color:"#08090c",border:"none",borderRadius:10,padding:"13px 32px",fontSize:15,fontWeight:800,cursor:"pointer",marginBottom:48}, onClick:redirectToOAuth }, "🔑 Login with Deriv")
+                ),
+
+            // Quick Actions label
+            e("div", { style:{fontSize:11,fontWeight:700,color:"#3d4f7c",letterSpacing:3,marginBottom:20,textTransform:"uppercase"} }, "Quick Actions"),
+
+            // 4-card grid (matching DBTraders exactly)
+            e("div", { style:{display:"grid",gridTemplateColumns:"repeat(4,220px)",gap:16,justifyContent:"center",paddingBottom:40} },
               [
-                { icon:"⚡", label:"Manual Trader", desc:"Place trades manually with live quotes", tab:"trade", color:C.green, border:"#164e63" },
-                { icon:"▲", label:"Charts", desc:"Live candlestick charts from tick data", tab:"charts", color:"#a78bfa", border:"#3b0764" },
-                { icon:"◎", label:"Analysis Tool", desc:"Signal scanner with digit & rise/fall stats", tab:"scanner", color:"#60a5fa", border:"#1e3a5f" },
-                { icon:"✦", label:"AI Software", desc:"Pre-built AI robot strategies", tab:"robots", color:C.green, border:"#14532d" },
-                { icon:"⚙", label:"Auto Trader", desc:"Condition-based bots, run simultaneously", tab:"autotrader", color:"#fb923c", border:"#431407" },
-                { icon:"▣", label:"Bulk Trader", desc:"Martingale bot with recovery prediction", tab:"bulk", color:"#f472b6", border:"#500724" },
-                { icon:"⛨", label:"Risk Calculator", desc:"Simulate Martingale stake sequences", tab:"risk", color:"#fbbf24", border:"#451a03" },
-                { icon:"▦", label:"Reports", desc:"Trade history and session P/L chart", tab:"reports", color:C.sub, border:C.border },
+                { icon:"⚡", label:"Manual Trader",   desc:"Place trades manually with live quotes",           tab:"trade",      color:"#22d3ee", border:"#0e7490" },
+                { icon:"▣", label:"Bulk Trader",      desc:"Martingale bot with recovery prediction",          tab:"bulk",       color:"#22c55e", border:"#15803d" },
+                { icon:"✦", label:"AI Robots",        desc:"Pre-built AI robots with smart entry logic",       tab:"robots",     color:"#a78bfa", border:"#6d28d9" },
+                { icon:"⚡", label:"Auto Trader",      desc:"Condition-based bots — run simultaneously",        tab:"autotrader", color:"#fb923c", border:"#c2410c" },
+                { icon:"◎", label:"Signal Scanner",   desc:"Live digit & rise/fall pattern analysis",          tab:"scanner",    color:"#60a5fa", border:"#1d4ed8" },
+                { icon:"◉", label:"Signals",          desc:"RSI, MACD, EMA and pivot point analysis",          tab:"signals",    color:"#f472b6", border:"#9d174d" },
+                { icon:"⛨", label:"Risk Calculator",  desc:"Simulate Martingale sequences before trading",     tab:"risk",       color:"#fbbf24", border:"#92400e" },
+                { icon:"▦", label:"Reports",          desc:"Trade history, P/L chart, bot leaderboard",        tab:"reports",    color:"#94a3b8", border:"#334155" },
               ].map(({icon,label,desc,tab:t,color,border}) =>
                 e("div", { key:t, onClick:()=>setTab(t), style:{
-                  background:C.card, border:`1px solid ${border}`,
-                  borderRadius:12, padding:"20px", cursor:"pointer",
-                  transition:"border-color 0.15s",
-                  position:"relative", overflow:"hidden",
+                  background:"rgba(13,21,38,0.8)",
+                  border:`1px solid ${border}44`,
+                  borderTop:`2px solid ${color}`,
+                  borderRadius:10, padding:"18px 16px", cursor:"pointer",
+                  backdropFilter:"blur(8px)",
+                  transition:"transform 0.15s, border-color 0.15s",
+                  textAlign:"left", position:"relative",
                 } },
-                  e("div", { style:{position:"absolute",top:0,left:0,right:0,height:3,background:color,borderRadius:"12px 12px 0 0"} }),
-                  e("div", { style:{fontSize:28,marginBottom:10} }, icon),
-                  e("div", { style:{fontSize:14,fontWeight:700,color:C.text,marginBottom:6} }, label),
-                  e("div", { style:{fontSize:12,color:C.muted,lineHeight:1.5} }, desc),
-                  e("div", { style:{fontSize:12,color,marginTop:12,fontWeight:600} }, "Open →")
+                  // Minus/close icon top right (matching DBTraders)
+                  e("div", { style:{position:"absolute",top:10,right:12,color:"#2a3550",fontSize:16,fontWeight:300} }, "−"),
+                  // Icon circle
+                  e("div", { style:{
+                    width:44, height:44, borderRadius:10,
+                    background:`${color}18`, border:`1px solid ${color}44`,
+                    display:"flex", alignItems:"center", justifyContent:"center",
+                    fontSize:20, marginBottom:12, color,
+                  } }, icon),
+                  e("div", { style:{fontSize:14,fontWeight:700,color:"#e8e6df",marginBottom:6} }, label),
+                  e("div", { style:{fontSize:11,color:"#4b5563",lineHeight:1.5,marginBottom:12,minHeight:32} }, desc),
+                  e("div", { style:{fontSize:12,color,fontWeight:600} }, "Open →")
                 )
               )
             ),
 
-            // Recent sessions
-            sessionHistory.length > 0 && e("div", { style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:20} },
-              e("div", { style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14} },
-                e("div", { style:{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:1} }, "RECENT SESSIONS"),
-                e("button", { style:{background:"none",border:"none",color:C.cyan,fontSize:12,cursor:"pointer"}, onClick:()=>setTab("reports") }, "View all →")
+            // Recent sessions strip (if any)
+            sessionHistory.length > 0 && e("div", { style:{
+              width:"100%", maxWidth:900, marginBottom:24, paddingTop:16,
+              borderTop:`1px solid #1e2028`,
+            } },
+              e("div", { style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10} },
+                e("span", { style:{fontSize:10,fontWeight:700,color:"#3d4f7c",letterSpacing:2} }, "RECENT SESSIONS"),
+                e("button", { style:{background:"none",border:"none",color:C.green,fontSize:11,cursor:"pointer"}, onClick:()=>setTab("reports") }, "View all →")
               ),
-              sessionHistory.slice(0,3).map(s =>
-                e("div", { key:s.id, style:{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:`1px solid #0f172a`} },
-                  e("div", null,
-                    e("div", { style:{fontSize:13,fontWeight:600,color:C.text} }, s.strategy),
-                    e("div", { style:{fontSize:11,color:C.muted} }, s.time+" • "+s.trades+" trades")
-                  ),
-                  e("div", { style:{fontSize:14,fontFamily:"monospace",fontWeight:700,color:s.pl>=0?C.green:C.red} }, (s.pl>=0?"+":"")+"$"+s.pl.toFixed(2))
+              e("div", { style:{display:"flex",gap:12,overflowX:"auto"} },
+                sessionHistory.slice(0,4).map(s =>
+                  e("div", { key:s.id, style:{
+                    background:"rgba(13,21,38,0.8)",border:`1px solid #1e2028`,
+                    borderRadius:8,padding:"10px 14px",flexShrink:0,minWidth:160,
+                  } },
+                    e("div",{style:{fontSize:11,fontWeight:700,color:"#e8e6df",marginBottom:2}},s.strategy),
+                    e("div",{style:{fontSize:10,color:"#4b5563",marginBottom:6}},s.time),
+                    e("div",{style:{fontSize:15,fontFamily:"'JetBrains Mono',monospace",fontWeight:800,color:s.pl>=0?C.green:C.red}},
+                      (s.pl>=0?"+":"")+"$"+s.pl.toFixed(2)
+                    )
+                  )
                 )
               )
             )
