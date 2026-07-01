@@ -496,28 +496,44 @@
       }
     });
 
+    const heartbeatRef = useRef(null);
+
     const authWs = useWS(null, {
-      onOpen: () => { authWs.send({ balance:1, subscribe:1 }); authWs.send({ portfolio:1 }); },
+      onOpen: () => {
+        authWs.send({ balance:1, subscribe:1 });
+        authWs.send({ portfolio:1 });
+        // Send heartbeat every 25s to keep connection alive
+        if (heartbeatRef.current) clearInterval(heartbeatRef.current);
+        heartbeatRef.current = setInterval(() => {
+          authWs.send({ ping:1 });
+        }, 25000);
+      },
       onClose: () => {
-        // If bot is running when connection drops, stop it safely and notify
-        if (botRunningRef.current) {
+        if (heartbeatRef.current) { clearInterval(heartbeatRef.current); heartbeatRef.current = null; }
+        // Stop bot safely if running
+        const wasRunning = botRunningRef.current;
+        if (wasRunning) {
           setBotRunning(false);
           setBotStatus("idle");
-          showToast("Connection lost — bot stopped. Reconnecting...", false);
+          showToast("Connection lost — reconnecting...", false);
         }
-        // Auto-reconnect after 3 seconds if we have a saved token
+        // Auto-reconnect with fresh OTP after 2 seconds
         setTimeout(() => {
           const token = sessionStorage.getItem("tn_access_token");
           const savedAccount = sessionStorage.getItem("tn_active_account");
           if (token && savedAccount) {
             const acct = JSON.parse(savedAccount);
             fetchOTPViaBackend(acct.account_id, token)
-              .then(otp => authWs.connect(otp.ws_url))
-              .catch(() => {}); // silent fail
+              .then(otp => {
+                authWs.connect(otp.ws_url);
+                if (wasRunning) showToast("Reconnected ✓ — restart bot to continue", true);
+              })
+              .catch(() => showToast("Reconnect failed — please log in again", false));
           }
-        }, 3000);
+        }, 2000);
       },
       onMessage: (msg) => {
+        if (msg.msg_type === "ping") return; // ignore pong responses
         if (msg.msg_type === "balance") {
           // Only accept balance for the currently active account
           const loginid = msg.balance?.loginid;
