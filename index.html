@@ -2629,12 +2629,12 @@
                 e("div", { style:{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:1} }, "BOT CONTROLS"),
                 e("div", { style:{display:"flex",gap:10} },
                   e("div", { style:{flex:1} },
-                    e("label", { style:{fontSize:10,color:C.muted,display:"block",marginBottom:4} }, "Stake"),
-                    e("input", { style:fieldStyle, type:"number", min:0.35, step:0.01, value:botBaseStake, onChange:ev=>setBotBaseStake(ev.target.value) })
+                    e("label", { style:{fontSize:10,color:C.muted,display:"block",marginBottom:4} }, "Base Stake ($)"),
+                    e("input", { style:{...fieldStyle,background:C.surface}, type:"number", min:0.35, step:0.01, value:botBaseStake, placeholder:"0.35", onChange:ev=>setBotBaseStake(ev.target.value) })
                   ),
                   e("div", { style:{flex:1} },
                     e("label", { style:{fontSize:10,color:C.muted,display:"block",marginBottom:4} }, "Max Stake Cap ($)"),
-                    e("input", { style:fieldStyle, type:"number", min:1, value:botMaxStake, onChange:ev=>setBotMaxStake(ev.target.value) })
+                    e("input", { style:{...fieldStyle,background:C.surface}, type:"number", min:1, value:botMaxStake, placeholder:"10", onChange:ev=>setBotMaxStake(ev.target.value) })
                   )
                 ),
                 e("div", { style:{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"6px 0"} },
@@ -2646,14 +2646,14 @@
                 ),
                 botUseMartingale && e("div", null,
                   e("label", { style:{fontSize:10,color:C.muted,display:"block",marginBottom:4} }, "Martingale ×"),
-                  e("input", { style:fieldStyle, type:"number", min:1, step:0.1, value:botMultiplier, onChange:ev=>setBotMultiplier(ev.target.value) })
+                  e("input", { style:{...fieldStyle,background:C.surface}, type:"number", min:1, step:0.1, value:botMultiplier, placeholder:"2", onChange:ev=>setBotMultiplier(ev.target.value) })
                 ),
                 e("div", { style:{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"6px 0"} },
                   e("div", { style:{fontSize:13,color:C.text,fontWeight:600} }, "Take Profit / Stop Loss")
                 ),
                 e("div", { style:{display:"flex",gap:10} },
-                  e("input", { style:fieldStyle, type:"number", min:0.5, step:0.5, value:botTakeProfit, onChange:ev=>setBotTakeProfit(ev.target.value), placeholder:"Take profit" }),
-                  e("input", { style:fieldStyle, type:"number", min:0.5, step:0.5, value:botStopLoss, onChange:ev=>setBotStopLoss(ev.target.value), placeholder:"Stop loss" })
+                  e("input", { style:{...fieldStyle,background:C.surface}, type:"number", min:0.5, step:0.5, value:botTakeProfit, onChange:ev=>setBotTakeProfit(ev.target.value), placeholder:"5" }),
+                  e("input", { style:{...fieldStyle,background:C.surface}, type:"number", min:0.5, step:0.5, value:botStopLoss, onChange:ev=>setBotStopLoss(ev.target.value), placeholder:"5" })
                 )
               ),
 
