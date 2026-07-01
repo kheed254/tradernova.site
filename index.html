@@ -1051,10 +1051,22 @@
         setBotType("overunder");
         setBotPrediction("over");
         setBotBarrier(0);
+        // Safe defaults for Over 0 Recovery
+        setBotBaseStake("0.35");
+        setBotMultiplier("2");
+        setBotMaxStake("10");
+        setBotTakeProfit("5");
+        setBotStopLoss("5");
       } else if (preset.type === "smartou") {
         setBotType("overunder");
         setBotPrediction("over");
         if (preset.barrier != null) setBotBarrier(preset.barrier);
+        // Set safe defaults for Smart OU
+        setBotBaseStake("0.35");
+        setBotMultiplier("2.2");
+        setBotMaxStake("10");
+        setBotTakeProfit("5");
+        setBotStopLoss("5");
       } else if (preset.type === "sniper") {
         setBotType("overunder");
         setBotPrediction("over");
@@ -3000,10 +3012,18 @@
 
       // ── Bot start confirmation modal (top-level so it works from Bulk Trader or any AI Robot run screen) ──
       botConfirming && e("div", { style:{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:2000} },
-        e("div", { style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:28,maxWidth:380} },
+        e("div", { style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:28,maxWidth:420} },
           e("h3", { style:{fontSize:17,fontWeight:700,marginBottom:12} }, "Confirm Bot Start"),
-          e("p", { style:{color:C.sub,fontSize:13,lineHeight:1.6,marginBottom:18} },
-            "This will place real trades on your demo account automatically. Base stake $"+botBaseStake+", Martingale ×"+botMultiplier+", max stake cap $"+botMaxStake+", stopping at +$"+botTakeProfit+" profit or -$"+botStopLoss+" loss."
+          // Safety warning for Martingale bots
+          parseFloat(botBaseStake) > 5 && e("div", { style:{background:"#1c0a0a",border:`1px solid ${C.red}`,borderRadius:8,padding:"10px 14px",marginBottom:14,fontSize:12,color:"#fca5a5"} },
+            "⚠️ Your base stake is $"+botBaseStake+". With Martingale ×"+botMultiplier+", a 5-loss streak would require $"+(parseFloat(botBaseStake)*Math.pow(parseFloat(botMultiplier)||2,5)).toFixed(2)+" stake. Consider starting with $0.35–$1."
+          ),
+          e("div", { style:{background:C.raised,borderRadius:8,padding:"10px 14px",marginBottom:14,fontSize:12,display:"grid",gridTemplateColumns:"1fr 1fr",gap:8} },
+            e("div", null, e("span",{style:{color:C.muted}},"Base stake: "), e("strong",{style:{color:C.green}},"$"+botBaseStake)),
+            e("div", null, e("span",{style:{color:C.muted}},"Martingale: "), e("strong",{style:{color:C.text}},"×"+botMultiplier)),
+            e("div", null, e("span",{style:{color:C.muted}},"Take profit: "), e("strong",{style:{color:C.green}},"+$"+botTakeProfit)),
+            e("div", null, e("span",{style:{color:C.muted}},"Stop loss: "), e("strong",{style:{color:C.red}},"-$"+botStopLoss)),
+            e("div", null, e("span",{style:{color:C.muted}},"Max stake cap: "), e("strong",{style:{color:C.amber}},"$"+botMaxStake)),
           ),
           e("div", { style:{display:"flex",gap:10} },
             e("button", { style:{flex:1,padding:"10px",borderRadius:8,border:`1px solid ${C.border}`,background:"transparent",color:C.sub,fontSize:13,fontWeight:600,cursor:"pointer"}, onClick:()=>setBotConfirming(false) }, "Cancel"),
