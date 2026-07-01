@@ -864,7 +864,7 @@
           // No confluence — skip this round, wait for next tick
           setNovaStatus("scanning");
           setNovaSkipped(s => s + 1);
-          setTimeout(() => setBotStatus("idle"), 1500);
+          setTimeout(() => setBotStatus("idle"), 500);
           return;
         }
         setNovaStatus("confirmed");
@@ -1074,72 +1074,67 @@
 
     // ── Nova AI Signal Engine ─────────────────────────────────────────────────
     function evaluateNovaSignal(digits, prices) {
-      if (digits.length < 20) return null;
+      if (digits.length < 15) return null;
 
       const recent20 = digits.slice(-20);
       const recent10 = digits.slice(-10);
       const recent5  = digits.slice(-5);
 
       // ── Signal 1: Even/Odd momentum bias ──────────────────────────────────
-      // Count even/odd in last 20 vs last 5 — look for momentum shift
-      const evenPct20 = (recent20.filter(d=>d%2===0).length/20)*100;
-      const evenPct5  = (recent5.filter(d=>d%2===0).length/5)*100;
-      const oePrediction = evenPct20 > 60 ? "odd"   // majority even → predict odd
-                         : evenPct20 < 40 ? "even"  // majority odd → predict even
-                         : evenPct5 > 60  ? "odd"   // recent shift to even → predict odd
-                         : evenPct5 < 40  ? "even"  // recent shift to odd → predict even
+      const evenPct20 = recent20.length ? (recent20.filter(d=>d%2===0).length/recent20.length)*100 : 50;
+      const evenPct5  = recent5.length  ? (recent5.filter(d=>d%2===0).length/recent5.length)*100  : 50;
+      // Lowered threshold: 55% instead of 60%
+      const oePrediction = evenPct20 > 55 ? "odd"
+                         : evenPct20 < 45 ? "even"
+                         : evenPct5 > 55  ? "odd"
+                         : evenPct5 < 45  ? "even"
                          : null;
-      const oeStrength = oePrediction
-        ? Math.abs(evenPct20 - 50) + Math.abs(evenPct5 - 50)
-        : 0;
+      const oeStrength = Math.abs(evenPct20 - 50);
 
       // ── Signal 2: Streak detection ────────────────────────────────────────
-      // Find current streak length and type
-      let streak = 1, streakType = recent10[recent10.length-1] % 2 === 0 ? "even" : "odd";
+      let streak = 1;
+      const lastType = recent10[recent10.length-1] % 2 === 0 ? "even" : "odd";
       for (let i = recent10.length - 2; i >= 0; i--) {
-        const t = recent10[i] % 2 === 0 ? "even" : "odd";
-        if (t === streakType) streak++;
+        if ((recent10[i] % 2 === 0 ? "even" : "odd") === lastType) streak++;
         else break;
       }
-      // After 3+ same, predict opposite (mean reversion)
-      const streakPrediction = streak >= 3 ? (streakType === "even" ? "odd" : "even") : null;
-      const streakStrength = streak >= 3 ? Math.min((streak - 2) * 25, 100) : 0;
+      // Lowered: 2+ streak instead of 3+
+      const streakPrediction = streak >= 2 ? (lastType === "even" ? "odd" : "even") : null;
+      const streakStrength = streak >= 2 ? Math.min(streak * 20, 80) : 0;
 
       // ── Signal 3: Digit frequency bias ───────────────────────────────────
-      // Check if even or odd digits dominate the last 15 ticks significantly
       const recent15 = digits.slice(-15);
-      const evenDigits = recent15.filter(d => d%2===0);
-      const oddDigits  = recent15.filter(d => d%2!==0);
-      const freqBias = evenDigits.length > 10 ? "odd"   // too many even → bet odd
-                     : oddDigits.length > 10  ? "even"  // too many odd → bet even
+      const evenCount = recent15.filter(d => d%2===0).length;
+      const oddCount  = recent15.filter(d => d%2!==0).length;
+      // Lowered: 9/15 instead of 10/15
+      const freqBias = evenCount >= 9 ? "odd"
+                     : oddCount  >= 9 ? "even"
                      : null;
-      const freqStrength = freqBias
-        ? (Math.max(evenDigits.length, oddDigits.length) / 15) * 100 - 50
-        : 0;
+      const freqStrength = Math.abs(evenCount - oddCount) * 5;
 
-      // ── Confluence check ──────────────────────────────────────────────────
-      const votes = [oePrediction, streakPrediction, freqBias].filter(Boolean);
-      const evenVotes = votes.filter(v => v === "even").length;
-      const oddVotes  = votes.filter(v => v === "odd").length;
+      // ── Confluence: need at least 2 of 3 signals ─────────────────────────
+      const signals = [
+        { name:"Even/Odd Momentum", value:evenPct20.toFixed(0)+"%", prediction:oePrediction, active:!!oePrediction, strength:oeStrength },
+        { name:"Streak Pattern",    value:streak+"x "+lastType, prediction:streakPrediction, active:streak>=2, strength:streakStrength },
+        { name:"Digit Frequency",   value:evenCount+"/"+oddCount, prediction:freqBias, active:!!freqBias, strength:freqStrength },
+      ];
 
-      if (votes.length < 2) return null; // need at least 2 signals
-      if (evenVotes === oddVotes) return null; // signals conflict
+      const activeSigs = signals.filter(s => s.active && s.prediction);
+      if (activeSigs.length < 2) return null;
+
+      const evenVotes = activeSigs.filter(s => s.prediction === "even").length;
+      const oddVotes  = activeSigs.filter(s => s.prediction === "odd").length;
+      if (evenVotes === oddVotes) return null; // conflict
 
       const winningPred = evenVotes > oddVotes ? "even" : "odd";
-      const agreement = Math.max(evenVotes, oddVotes) / 3; // 0.67 or 1.0
-      const totalStrength = ((oeStrength/2) + streakStrength + freqStrength) / 3;
-      const confidence = Math.round(agreement * 100 * 0.4 + totalStrength * 0.6);
-
-      if (confidence < 45) return null; // minimum confidence threshold
+      const agreement = Math.max(evenVotes, oddVotes) / activeSigs.length;
+      const avgStrength = activeSigs.reduce((a,s)=>a+s.strength,0) / activeSigs.length;
+      const confidence = Math.min(Math.round(agreement * 60 + avgStrength * 0.6 + 20), 99);
 
       return {
         prediction: winningPred,
-        confidence: Math.min(confidence, 99),
-        signals: [
-          { name:"Even/Odd Momentum", value:evenPct20.toFixed(0)+"%", prediction:oePrediction, active:!!oePrediction, strength:oeStrength },
-          { name:"Streak Pattern",    value:streak+"x "+streakType,   prediction:streakPrediction, active:streak>=3, strength:streakStrength },
-          { name:"Digit Frequency",   value:evenDigits.length+"/"+oddDigits.length, prediction:freqBias, active:!!freqBias, strength:freqStrength },
-        ],
+        confidence,
+        signals,
         votes: Math.max(evenVotes, oddVotes),
       };
     }
