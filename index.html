@@ -1180,11 +1180,21 @@
     }
     function confirmStartBot() {
       setBotConfirming(false);
+      const baseStake = parseFloat(botBaseStake) || 1;
       setBotPL(0);
-      setBotStake(parseFloat(botBaseStake) || 1);
+      setBotStake(baseStake);
       setBotTrades([]);
       setBotStatus("idle");
       currentPredictionRef.current = botPrediction;
+      // Directly sync botStateRef so the round trigger has correct values immediately
+      botStateRef.current = {
+        sym: botSym, type: botType, prediction: botPrediction, barrier: botBarrier,
+        recoveryPrediction: botRecoveryPrediction, useMartingale: botUseMartingale,
+        baseStake, multiplier: parseFloat(botMultiplier) || 2,
+        takeProfit: parseFloat(botTakeProfit) || 10, stopLoss: parseFloat(botStopLoss) || 10,
+        maxStake: parseFloat(botMaxStake) || 20,
+        pl: 0, stake: baseStake,
+      };
       // Reset smart bot state
       setSmartConsecLosses(0);
       setSmartPauseRounds(0);
@@ -1206,6 +1216,9 @@
       }
       setBotRunning(true);
       playStart();
+    }
+
+    function stopBot() {
       setBotRunning(false);
       setBotStatus("idle");
       showToast("Bot stopped", true);
