@@ -431,6 +431,25 @@
 
     const authWs = useWS(null, {
       onOpen: () => { authWs.send({ balance:1, subscribe:1 }); authWs.send({ portfolio:1 }); },
+      onClose: () => {
+        // If bot is running when connection drops, stop it safely and notify
+        if (botRunningRef.current) {
+          setBotRunning(false);
+          setBotStatus("idle");
+          showToast("Connection lost — bot stopped. Reconnecting...", false);
+        }
+        // Auto-reconnect after 3 seconds if we have a saved token
+        setTimeout(() => {
+          const token = sessionStorage.getItem("tn_access_token");
+          const savedAccount = sessionStorage.getItem("tn_active_account");
+          if (token && savedAccount) {
+            const acct = JSON.parse(savedAccount);
+            fetchOTPViaBackend(acct.account_id, token)
+              .then(otp => authWs.connect(otp.ws_url))
+              .catch(() => {}); // silent fail
+          }
+        }, 3000);
+      },
       onMessage: (msg) => {
         console.log("AUTH WS msg:", msg.msg_type, "req_id:", msg.req_id, msg);
         if (msg.msg_type === "balance")   { console.log("balance msg:", msg); setBalance(msg.balance); }
@@ -716,15 +735,22 @@
       const timeoutId = setTimeout(() => {
         setBotStatus(curr => {
           if (curr === "waiting_proposal") {
-            showToast("Bot: no response from server after 10s — stopping for safety", false);
-            setBotRunning(false);
+            console.warn("Bot proposal timeout — retrying once...");
+            // Retry once before stopping
+            const st2 = botStateRef.current;
+            if (st2.sym && botRunningRef.current) {
+              setBotStatus("idle"); // trigger retry via effect
+            } else {
+              showToast("Bot: server not responding — stopping for safety", false);
+              setBotRunning(false);
+            }
             return "idle";
           }
           return curr;
         });
-      }, 10000);
+      }, 15000);
       return () => clearTimeout(timeoutId);
-      }, 150);
+      }, 800);
       return () => clearTimeout(delay);
     }, [botRunning, botStatus]);
 
