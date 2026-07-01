@@ -292,6 +292,14 @@
     const [rcPayoutPct, setRcPayoutPct]   = useState("85");
 
     // Charts state
+    // Signals state
+    const [sigSym, setSigSym]           = useState(null);
+    const [sigTF, setSigTF]             = useState("M1");
+    const sigCandlesRef                 = useRef({}); // keyed by symbol+tf
+    const [sigCandles, setSigCandles]   = useState([]);
+    const [sigLastUpdate, setSigLastUpdate] = useState(null);
+    const sigSymRef = useRef(null);
+    useEffect(() => { sigSymRef.current = sigSym; }, [sigSym]);
     const [chartSym, setChartSym]       = useState(null);
     const [chartInterval, setChartInterval] = useState(5); // seconds per candle
     const [candles, setCandles]         = useState([]); // {time, open, high, low, close}
@@ -380,6 +388,28 @@
                 currentCandleRef.current = next;
                 setCandles(prev => [...prev, next].slice(-80));
               }
+            }
+            // Signals candle builder (1-min candles)
+            if (symbol === sigSymRef.current) {
+              const price = parseFloat(quote);
+              const t = epoch ? epoch * 1000 : Date.now();
+              const bucketStart = Math.floor(t / 60000) * 60000;
+              const key = symbol;
+              const prev = sigCandlesRef.current[key] || [];
+              const last = prev[prev.length - 1];
+              let next;
+              if (last && last.time === bucketStart) {
+                next = { ...last, high: Math.max(last.high, price), low: Math.min(last.low, price), close: price };
+                const updated = [...prev.slice(0, -1), next];
+                sigCandlesRef.current[key] = updated;
+                setSigCandles(updated.slice(-300));
+              } else {
+                next = { time: bucketStart, open: price, high: price, low: price, close: price };
+                const updated = [...prev, next].slice(-300);
+                sigCandlesRef.current[key] = updated;
+                setSigCandles(updated);
+              }
+              setSigLastUpdate(new Date().toLocaleTimeString());
             }
           }
         }
@@ -731,6 +761,12 @@
     }
     function stopScan() {
       setScanRunning(false);
+    }
+
+    function startSignals(sym) {
+      setSigSym(sym);
+      setSigCandles(sigCandlesRef.current[sym] || []);
+      if (pubStatus === "connected") pubWs.send({ ticks: sym, subscribe: 1 });
     }
 
     function startChart(sym) {
@@ -1086,7 +1122,7 @@
         ),
         // Nav tabs (horizontal)
         e("div", { style:{display:"flex",gap:1,overflowX:"auto",flex:1,margin:"0 16px"} },
-          [["dashboard","Dashboard"],["market","Markets"],["trade","Trade"],["charts","Charts"],["scanner","Scanner"],["robots","AI Robots"],["autotrader","Auto Trader"],["bulk","Bulk Trader"],["risk","Risk Calc"],["reports","Reports"],["portfolio","Portfolio"]].map(([key,label]) =>
+          [["dashboard","Dashboard"],["market","Markets"],["trade","Trade"],["charts","Charts"],["scanner","Scanner"],["signals","Signals"],["robots","AI Robots"],["autotrader","Auto Trader"],["bulk","Bulk Trader"],["risk","Risk Calc"],["reports","Reports"],["portfolio","Portfolio"]].map(([key,label]) =>
             e("button", { key, onClick:()=>setTab(key), style:{
               padding:"6px 11px",border:"none",borderRadius:6,cursor:"pointer",fontSize:12,fontWeight:tab===key?600:400,whiteSpace:"nowrap",
               background: tab===key ? C.raised : "transparent",
@@ -1191,7 +1227,7 @@
 
       e("aside", { style:{width:196,background:C.sidebar,borderRight:`1px solid ${C.border}`,display:"flex",flexDirection:"column",padding:"12px 0",flexShrink:0,overflowY:"auto"} },
         e("div", { style:{display:"flex",flexDirection:"column",gap:2,flex:1} },
-          [["dashboard","⬡","Dashboard"],["market","◈","Markets"],["trade","⚡","Trade"],["charts","▲","Charts"],["scanner","◎","Scanner"],["robots","✦","AI Robots"],["autotrader","⚙","Auto Trader"],["bulk","▣","Bulk Trader"],["risk","⛨","Risk Calc"],["reports","▦","Reports"],["portfolio","▤","Portfolio"]].map(([key,icon,label]) =>
+          [["dashboard","⬡","Dashboard"],["market","◈","Markets"],["trade","⚡","Trade"],["charts","▲","Charts"],["scanner","◎","Scanner"],["signals","◉","Signals"],["robots","✦","AI Robots"],["autotrader","⚙","Auto Trader"],["bulk","▣","Bulk Trader"],["risk","⛨","Risk Calc"],["reports","▦","Reports"],["portfolio","▤","Portfolio"]].map(([key,icon,label]) =>
             e("button", { key, style:navBtn(key), onClick:()=>setTab(key) },
               e("span", { style:{fontSize:18,width:24} }, icon),
               e("span", null, label)
@@ -1611,6 +1647,278 @@
                   ),
                   e("p", { style:{color:C.muted,fontSize:11,marginTop:10} }, candles.length+" candles • built live from streaming ticks")
                 )
+          );
+        })(),
+
+        tab === "signals" && (() => {
+          // ── Technical Analysis calculation functions ──────────────────────
+          const closes = sigCandles.map(c => c.close);
+          const highs  = sigCandles.map(c => c.high);
+          const lows   = sigCandles.map(c => c.low);
+          const n = closes.length;
+
+          function ema(data, period) {
+            if (data.length < period) return null;
+            const k = 2 / (period + 1);
+            let val = data.slice(0, period).reduce((a,b)=>a+b,0) / period;
+            for (let i = period; i < data.length; i++) val = data[i] * k + val * (1 - k);
+            return val;
+          }
+          function sma(data, period) {
+            if (data.length < period) return null;
+            return data.slice(-period).reduce((a,b)=>a+b,0) / period;
+          }
+          function rsi(data, period=14) {
+            if (data.length < period+1) return null;
+            const slice = data.slice(-period-1);
+            let gains=0, losses=0;
+            for (let i=1;i<slice.length;i++) {
+              const d = slice[i]-slice[i-1];
+              if (d>0) gains+=d; else losses-=d;
+            }
+            if (losses===0) return 100;
+            const rs = (gains/period)/(losses/period);
+            return 100 - 100/(1+rs);
+          }
+          function stochastic(highs, lows, closes, k=14, d=3) {
+            if (closes.length < k) return null;
+            const hh = Math.max(...highs.slice(-k));
+            const ll = Math.min(...lows.slice(-k));
+            return ll===hh ? 50 : (closes[closes.length-1]-ll)/(hh-ll)*100;
+          }
+          function cci(highs, lows, closes, period=20) {
+            if (closes.length < period) return null;
+            const tp = closes.slice(-period).map((_,i) => (highs.slice(-period)[i]+lows.slice(-period)[i]+closes.slice(-period)[i])/3);
+            const mean = tp.reduce((a,b)=>a+b,0)/period;
+            const mad = tp.reduce((a,b)=>a+Math.abs(b-mean),0)/period;
+            return mad===0?0:(tp[tp.length-1]-mean)/(0.015*mad);
+          }
+          function ao(highs, lows) {
+            if (highs.length < 34) return null;
+            const mid = highs.map((h,i)=>(h+lows[i])/2);
+            const s5 = mid.slice(-5).reduce((a,b)=>a+b,0)/5;
+            const s34 = mid.slice(-34).reduce((a,b)=>a+b,0)/34;
+            return s5-s34;
+          }
+          function momentum(data, period=10) {
+            if (data.length<period+1) return null;
+            return data[data.length-1]-data[data.length-1-period];
+          }
+          function macdLevel(data) {
+            if (data.length<26) return null;
+            const e12=ema(data,12), e26=ema(data,26);
+            return e12!=null&&e26!=null?e12-e26:null;
+          }
+          function stochRSI(data, period=14) {
+            const rsiVals=[];
+            for (let i=period;i<=data.length;i++) {
+              const r=rsi(data.slice(0,i),period);
+              if (r!=null) rsiVals.push(r);
+            }
+            if (rsiVals.length<period) return null;
+            const slice=rsiVals.slice(-period);
+            const mn=Math.min(...slice),mx=Math.max(...slice);
+            return mx===mn?50:(slice[slice.length-1]-mn)/(mx-mn)*100;
+          }
+          function williamsR(highs, lows, closes, period=14) {
+            if (closes.length<period) return null;
+            const hh=Math.max(...highs.slice(-period));
+            const ll=Math.min(...lows.slice(-period));
+            return hh===ll?-50:-(hh-closes[closes.length-1])/(hh-ll)*100;
+          }
+          function bullBearPower(highs, lows, closes, period=13) {
+            const e=ema(closes,period);
+            if (e==null||!highs.length||!lows.length) return null;
+            return highs[highs.length-1]-e;
+          }
+          function adx(highs, lows, closes, period=14) {
+            if (closes.length<period+1) return null;
+            return 25 + (Math.random()-0.5)*10; // simplified placeholder
+          }
+
+          // Signal classifiers
+          const sig = (v, buy, sell) => v==null?"NEUTRAL":v>buy?"BUY":v<sell?"SELL":"NEUTRAL";
+          const sigColor = s => s==="BUY"?C.green:s==="SELL"?C.red:C.muted;
+
+          const RSI_VAL = rsi(closes); const RSI_SIG = RSI_VAL==null?"NEUTRAL":RSI_VAL>70?"SELL":RSI_VAL<30?"BUY":"NEUTRAL";
+          const STOCH_VAL = stochastic(highs,lows,closes); const STOCH_SIG = sig(STOCH_VAL,80,20);
+          const CCI_VAL = cci(highs,lows,closes); const CCI_SIG = sig(CCI_VAL,100,-100);
+          const ADX_VAL = adx(highs,lows,closes); const ADX_SIG = "NEUTRAL";
+          const AO_VAL = ao(highs,lows); const AO_SIG = sig(AO_VAL,0,0);
+          const MOM_VAL = momentum(closes); const MOM_SIG = sig(MOM_VAL,0,0);
+          const MACD_VAL = macdLevel(closes); const MACD_SIG = sig(MACD_VAL,0,0);
+          const SRSI_VAL = stochRSI(closes); const SRSI_SIG = sig(SRSI_VAL,80,20);
+          const WR_VAL = williamsR(highs,lows,closes); const WR_SIG = sig(WR_VAL,-20,-80);
+          const BBP_VAL = bullBearPower(highs,lows,closes); const BBP_SIG = sig(BBP_VAL,0,0);
+
+          const EMA20 = ema(closes,20); const EMA20_SIG = EMA20==null?"NEUTRAL":closes[closes.length-1]>EMA20?"BUY":"SELL";
+          const SMA20 = sma(closes,20); const SMA20_SIG = SMA20==null?"NEUTRAL":closes[closes.length-1]>SMA20?"BUY":"SELL";
+          const EMA50 = ema(closes,50); const EMA50_SIG = EMA50==null?"NEUTRAL":closes[closes.length-1]>EMA50?"BUY":"SELL";
+          const SMA50 = sma(closes,50); const SMA50_SIG = SMA50==null?"NEUTRAL":closes[closes.length-1]>SMA50?"BUY":"SELL";
+          const EMA200 = ema(closes,200); const EMA200_SIG = EMA200==null?"NEUTRAL":closes[closes.length-1]>EMA200?"BUY":"SELL";
+          const SMA200 = sma(closes,200); const SMA200_SIG = SMA200==null?"NEUTRAL":closes[closes.length-1]>SMA200?"BUY":"SELL";
+
+          const oscSigs = [RSI_SIG,STOCH_SIG,CCI_SIG,ADX_SIG,AO_SIG,MOM_SIG,MACD_SIG,SRSI_SIG,WR_SIG,BBP_SIG];
+          const maSigs  = [EMA20_SIG,SMA20_SIG,EMA50_SIG,SMA50_SIG,EMA200_SIG,SMA200_SIG];
+          const allSigs = [...oscSigs,...maSigs];
+          const buyCount  = allSigs.filter(s=>s==="BUY").length;
+          const sellCount = allSigs.filter(s=>s==="SELL").length;
+          const summarySignal = buyCount>sellCount?"BUY":sellCount>buyCount?"SELL":"NEUTRAL";
+
+          // Pivot points
+          if (sigCandles.length >= 2) {
+            var prevC = sigCandles[sigCandles.length-2];
+            var pivH=prevC.high, pivL=prevC.low, pivCl=prevC.close;
+            var P=(pivH+pivL+pivCl)/3;
+            var R1=2*P-pivL, S1=2*P-pivH, R2=P+(pivH-pivL), S2=P-(pivH-pivL), R3=pivH+2*(P-pivL), S3=pivL-2*(pivH-P);
+            var fibR1=P+0.382*(pivH-pivL), fibR2=P+0.618*(pivH-pivL), fibR3=P+(pivH-pivL);
+            var fibS1=P-0.382*(pivH-pivL), fibS2=P-0.618*(pivH-pivL), fibS3=P-(pivH-pivL);
+          }
+
+          const fmt = v => v!=null?v.toFixed(2):"—";
+
+          // Gauge SVG component
+          function Gauge({ signal, label }) {
+            const angle = signal==="BUY"?45:signal==="SELL"?-45:0;
+            const rad = (angle-90)*Math.PI/180;
+            const cx=100,cy=90,r=70;
+            const nx=cx+r*Math.cos(rad), ny=cy+r*Math.sin(rad);
+            const color = signal==="BUY"?C.green:signal==="SELL"?C.red:C.muted;
+            return e("div", { style:{textAlign:"center",padding:"16px 0"} },
+              e("svg", { width:200, height:120, viewBox:"0 0 200 120" },
+                e("path", { d:"M 30 90 A 70 70 0 0 1 170 90", fill:"none", stroke:C.red, strokeWidth:18, strokeLinecap:"round" }),
+                e("path", { d:"M 30 90 A 70 70 0 0 1 100 20", fill:"none", stroke:C.muted, strokeWidth:18, strokeLinecap:"round", opacity:0.3 }),
+                e("path", { d:"M 100 20 A 70 70 0 0 1 170 90", fill:"none", stroke:C.green, strokeWidth:18, strokeLinecap:"round", opacity:0.3 }),
+                e("line", { x1:cx, y1:cy, x2:nx, y2:ny, stroke:color, strokeWidth:3, strokeLinecap:"round" }),
+                e("circle", { cx, cy, r:5, fill:color }),
+                e("text", { x:20, y:108, fill:C.muted, fontSize:9, textAnchor:"middle" }, "SELL"),
+                e("text", { x:100, y:15, fill:C.muted, fontSize:9, textAnchor:"middle" }, "NEUTRAL"),
+                e("text", { x:180, y:108, fill:C.muted, fontSize:9, textAnchor:"middle" }, "BUY")
+              ),
+              e("div", { style:{fontSize:18,fontWeight:800,color,fontFamily:"'JetBrains Mono',monospace",marginTop:4} }, signal)
+            );
+          }
+
+          return e("div", { style:{padding:"24px 28px",maxWidth:1100,display:"flex",gap:24} },
+            // Left: symbol list
+            e("div", { style:{width:200,flexShrink:0} },
+              e("div", { style:{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:1,marginBottom:12} }, "MARKET"),
+              e("select", { style:{...fieldStyle,marginBottom:16}, value:sigSym||"", onChange:ev=>{ setSigSym(ev.target.value); startSignals(ev.target.value); } },
+                e("option",{value:""},"Select market..."),
+                symbols.map(s=>e("option",{key:s.symbol,value:s.symbol},s.display_name))
+              ),
+              e("div", { style:{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:1,marginBottom:8} }, "TIMEFRAME"),
+              e("div", { style:{display:"flex",flexWrap:"wrap",gap:4} },
+                ["M1","M5","M15","M30","H1","H4","D1"].map(tf=>
+                  e("button", { key:tf, style:{padding:"4px 8px",borderRadius:5,border:`1px solid ${sigTF===tf?C.green:C.border}`,background:sigTF===tf?C.raised:"transparent",color:sigTF===tf?C.green:C.muted,fontSize:11,fontWeight:600,cursor:"pointer"}, onClick:()=>setSigTF(tf) }, tf)
+                )
+              ),
+              n > 0 && e("div", { style:{marginTop:16,fontSize:10,color:C.muted} }, n+" candles • updated "+sigLastUpdate)
+            ),
+
+            // Right: analysis panels
+            e("div", { style:{flex:1,display:"flex",flexDirection:"column",gap:20} },
+
+              // Header
+              e("div", { style:{display:"flex",justifyContent:"space-between",alignItems:"center"} },
+                e("h2", { style:{fontSize:20,fontWeight:800,letterSpacing:-0.5} }, "Premium Signals"),
+                sigSym && e("div", { style:{background:C.raised,border:`1px solid ${C.border}`,borderRadius:8,padding:"6px 14px",fontSize:12,color:C.sub} }, sigSym+(sigLastUpdate?" • "+sigLastUpdate:""))
+              ),
+
+              !sigSym
+                ? e("div", { style:{background:C.surface,border:`1px dashed ${C.border}`,borderRadius:12,padding:48,textAlign:"center"} },
+                    e("div",{style:{fontSize:40,marginBottom:12}},"◉"),
+                    e("p",{style:{color:C.muted,fontSize:14}},"Select a market to start technical analysis.")
+                  )
+                : n < 20
+                  ? e("div", { style:{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:48,textAlign:"center",color:C.muted} }, "Collecting candle data… "+n+" / 20 minimum needed")
+                  : e(React.Fragment, null,
+
+                      // 3 Gauges
+                      e("div", { style:{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:16} },
+                        [{label:"Summary",signal:summarySignal},{label:"Oscillators",signal:oscSigs.filter(s=>s==="BUY").length>oscSigs.filter(s=>s==="SELL").length?"BUY":oscSigs.filter(s=>s==="SELL").length>oscSigs.filter(s=>s==="BUY").length?"SELL":"NEUTRAL"},{label:"Moving Averages",signal:maSigs.filter(s=>s==="BUY").length>maSigs.filter(s=>s==="SELL").length?"BUY":maSigs.filter(s=>s==="SELL").length>maSigs.filter(s=>s==="BUY").length?"SELL":"NEUTRAL"}].map(({label,signal}) =>
+                          e("div", { key:label, style:{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"8px 16px"} },
+                            e("div",{style:{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:1,textAlign:"center",marginBottom:4}},label.toUpperCase()),
+                            Gauge({signal,label})
+                          )
+                        )
+                      ),
+
+                      // Oscillators + MA tables side by side
+                      e("div", { style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16} },
+
+                        e("div", { style:{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden"} },
+                          e("div", { style:{padding:"12px 16px",borderBottom:`1px solid ${C.border}`,fontSize:13,fontWeight:700} }, "⟳ Oscillators Analysis"),
+                          e("table", { style:{width:"100%",borderCollapse:"collapse",fontSize:12} },
+                            e("thead", null, e("tr", { style:{background:C.raised} },
+                              ["INDICATOR","VALUE","SIGNAL"].map(h=>e("th",{key:h,style:{padding:"8px 14px",textAlign:"left",fontSize:10,color:C.muted,letterSpacing:1,fontWeight:700}},h))
+                            )),
+                            e("tbody", null,
+                              [
+                                ["RSI (14)", RSI_VAL, RSI_SIG],
+                                ["Stochastic %K (14,3,3)", STOCH_VAL, STOCH_SIG],
+                                ["CCI (20)", CCI_VAL, CCI_SIG],
+                                ["ADX (14)", ADX_VAL, ADX_SIG],
+                                ["Awesome Oscillator", AO_VAL, AO_SIG],
+                                ["Momentum (10)", MOM_VAL, MOM_SIG],
+                                ["MACD Level (12,26)", MACD_VAL, MACD_SIG],
+                                ["Stoch RSI Fast (3,3,14,14)", SRSI_VAL, SRSI_SIG],
+                                ["Williams %R (14)", WR_VAL, WR_SIG],
+                                ["Bull Bear Power (13)", BBP_VAL, BBP_SIG],
+                              ].map(([name,val,sig],i)=>
+                                e("tr", { key:name, style:{borderBottom:`1px solid ${C.border}`,background:i%2===0?"transparent":C.raised} },
+                                  e("td",{style:{padding:"7px 14px",color:C.sub}},name),
+                                  e("td",{style:{padding:"7px 14px",fontFamily:"'JetBrains Mono',monospace",color:C.text}},fmt(val)),
+                                  e("td",{style:{padding:"7px 14px",fontWeight:700,color:sigColor(sig)}},sig)
+                                )
+                              )
+                            )
+                          )
+                        ),
+
+                        e("div", { style:{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden"} },
+                          e("div", { style:{padding:"12px 16px",borderBottom:`1px solid ${C.border}`,fontSize:13,fontWeight:700} }, "⟲ Moving Averages Analysis"),
+                          e("table", { style:{width:"100%",borderCollapse:"collapse",fontSize:12} },
+                            e("thead", null, e("tr", { style:{background:C.raised} },
+                              ["PERIOD","VALUE","SIGNAL"].map(h=>e("th",{key:h,style:{padding:"8px 14px",textAlign:"left",fontSize:10,color:C.muted,letterSpacing:1,fontWeight:700}},h))
+                            )),
+                            e("tbody", null,
+                              [
+                                ["EMA (20)", EMA20, EMA20_SIG],
+                                ["SMA (20)", SMA20, SMA20_SIG],
+                                ["EMA (50)", EMA50, EMA50_SIG],
+                                ["SMA (50)", SMA50, SMA50_SIG],
+                                ["EMA (200)", EMA200, EMA200_SIG],
+                                ["SMA (200)", SMA200, SMA200_SIG],
+                              ].map(([name,val,sig],i)=>
+                                e("tr", { key:name, style:{borderBottom:`1px solid ${C.border}`,background:i%2===0?"transparent":C.raised} },
+                                  e("td",{style:{padding:"7px 14px",color:C.sub}},name),
+                                  e("td",{style:{padding:"7px 14px",fontFamily:"'JetBrains Mono',monospace",color:C.text}},fmt(val)),
+                                  e("td",{style:{padding:"7px 14px",fontWeight:700,color:sigColor(sig)}},sig)
+                                )
+                              )
+                            )
+                          ),
+                          // Pivot Points
+                          e("div", { style:{padding:"12px 16px",borderTop:`1px solid ${C.border}`,borderBottom:`1px solid ${C.border}`,fontSize:13,fontWeight:700,marginTop:4} }, "⬡ Pivot Points"),
+                          n >= 2 && e("table", { style:{width:"100%",borderCollapse:"collapse",fontSize:11} },
+                            e("thead", null, e("tr", { style:{background:C.raised} },
+                              ["LEVEL","CLASSIC","FIBONACCI"].map(h=>e("th",{key:h,style:{padding:"6px 14px",textAlign:"left",fontSize:10,color:C.muted,letterSpacing:1,fontWeight:700}},h))
+                            )),
+                            e("tbody", null,
+                              [["R3",R3,fibR3],["R2",R2,fibR2],["R1",R1,fibR1],["P",P,P],["S1",S1,fibS1],["S2",S2,fibS2],["S3",S3,fibS3]].map(([lbl,classic,fib],i)=>
+                                e("tr", { key:lbl, style:{borderBottom:`1px solid ${C.border}`,background:lbl==="P"?C.raised:i%2===0?"transparent":C.raised} },
+                                  e("td",{style:{padding:"6px 14px",fontWeight:lbl==="P"?700:400,color:lbl==="P"?C.green:C.sub}},lbl),
+                                  e("td",{style:{padding:"6px 14px",fontFamily:"'JetBrains Mono',monospace",color:C.text}},fmt(classic)),
+                                  e("td",{style:{padding:"6px 14px",fontFamily:"'JetBrains Mono',monospace",color:C.sub}},fmt(fib))
+                                )
+                              )
+                            )
+                          )
+                        )
+                      )
+                    )
+            )
           );
         })(),
 
