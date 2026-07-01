@@ -248,7 +248,19 @@
     const [scanRunning, setScanRunning] = useState(false);
     const [scanMatchDigit, setScanMatchDigit] = useState(5);
     const [activeRobot, setActiveRobot] = useState(null);
-    const [sessionHistory, setSessionHistory] = useState([]);
+    const [sessionHistory, setSessionHistoryRaw] = useState(() => {
+      try {
+        const saved = localStorage.getItem("tn_session_history");
+        return saved ? JSON.parse(saved) : [];
+      } catch { return []; }
+    });
+    const setSessionHistory = (updater) => {
+      setSessionHistoryRaw(prev => {
+        const next = typeof updater === "function" ? updater(prev) : updater;
+        try { localStorage.setItem("tn_session_history", JSON.stringify(next)); } catch {}
+        return next;
+      });
+    };
     const scanSymRef = useRef(null);
     const scanCountRef = useRef(1000);
     useEffect(() => { scanSymRef.current = scanRunning ? scanSym : null; }, [scanSym, scanRunning]);
@@ -591,14 +603,15 @@
             currentPredictionRef.current = won ? st.prediction : st.recoveryPrediction;
             // Helper to save session
             const saveSession = (reason) => {
+              const botName = activeRobot?.name || (st.type === "evenodd" ? "Even/Odd" : "Over/Under");
               setSessionHistory(prev => [{
                 id: Date.now(), time: new Date().toLocaleString(),
-                strategy: st.type === "evenodd" ? "Even/Odd" : "Over/Under",
+                strategy: botName,
                 sym: st.sym, reason,
                 trades: botTradesRef.current.length,
                 won: botTradesRef.current.filter(t=>t.won).length,
                 pl: newPL, baseStake: st.baseStake,
-              }, ...prev].slice(0, 50));
+              }, ...prev].slice(0, 200));
             };
             // Check stop conditions
             if (newPL >= st.takeProfit) {
@@ -1142,16 +1155,18 @@
       setBotStatus("idle");
       showToast("Bot stopped", true);
       if (botTrades.length > 0) {
+        const botName = activeRobot?.name || (botType === "evenodd" ? "Even/Odd" : "Over/Under");
         setSessionHistory(prev => [{
           id: Date.now(),
           time: new Date().toLocaleString(),
-          strategy: botType === "evenodd" ? "Even/Odd" : "Over/Under",
+          strategy: botName,
           sym: botSym,
+          reason: "Manual stop",
           trades: botTrades.length,
           won: botTrades.filter(t=>t.won).length,
           pl: botPL,
           baseStake: parseFloat(botBaseStake)||1,
-        }, ...prev].slice(0, 50));
+        }, ...prev].slice(0, 200));
       }
     }
 
@@ -1598,7 +1613,7 @@
         tab === "reports" && e("div", { style:{padding:32,maxWidth:1000} },
           e("div", { style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:24} },
             e("h2", { style:{fontSize:22,fontWeight:700,margin:0,letterSpacing:-0.5} }, "Trade History & Reports"),
-            sessionHistory.length > 0 && e("button", { style:{background:"none",border:`1px solid ${C.border}`,color:C.red,borderRadius:8,padding:"6px 14px",fontSize:12,cursor:"pointer"}, onClick:()=>setSessionHistory([]) }, "Clear history")
+            sessionHistory.length > 0 && e("button", { style:{background:"none",border:`1px solid ${C.border}`,color:C.red,borderRadius:8,padding:"6px 14px",fontSize:12,cursor:"pointer"}, onClick:()=>{ setSessionHistory([]); try { localStorage.removeItem("tn_session_history"); } catch {} } }, "Clear history")
           ),
 
           sessionHistory.length === 0
@@ -1690,6 +1705,38 @@
                         ),
                         e("div", { style:{fontSize:16,fontFamily:"monospace",fontWeight:700,color:C.red} }, (worstSession.pl>=0?"+":"")+"$"+worstSession.pl.toFixed(2))
                       )
+                    )
+                  );
+                })(),
+
+                // Bot performance leaderboard
+                (() => {
+                  const botMap = {};
+                  sessionHistory.forEach(s => {
+                    if (!botMap[s.strategy]) botMap[s.strategy] = { sessions:0, trades:0, won:0, pl:0 };
+                    botMap[s.strategy].sessions++;
+                    botMap[s.strategy].trades += s.trades||0;
+                    botMap[s.strategy].won += s.won||0;
+                    botMap[s.strategy].pl += s.pl||0;
+                  });
+                  const bots = Object.entries(botMap).sort((a,b) => b[1].pl - a[1].pl);
+                  if (bots.length < 2) return null;
+                  return e("div", { style:{marginBottom:20} },
+                    e("div", { style:{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:1,marginBottom:12} }, "BOT PERFORMANCE LEADERBOARD"),
+                    e("div", { style:{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:12} },
+                      bots.map(([name, stats], i) => {
+                        const winRate = stats.trades ? ((stats.won/stats.trades)*100).toFixed(0) : 0;
+                        const color = i===0 ? C.green : stats.pl >= 0 ? C.sub : C.red;
+                        return e("div", { key:name, style:{background:C.surface,border:`1px solid ${i===0?C.green:C.border}`,borderRadius:10,padding:"14px 16px"} },
+                          i===0 && e("div", { style:{fontSize:9,fontWeight:700,color:C.green,letterSpacing:1,marginBottom:6} }, "🏆 BEST PERFORMER"),
+                          e("div", { style:{fontSize:13,fontWeight:700,color:C.text,marginBottom:8} }, name),
+                          e("div", { style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:4,fontSize:11} },
+                            e("div", { style:{color:C.muted} }, "Sessions"), e("div", { style:{color:C.text,fontWeight:600} }, stats.sessions),
+                            e("div", { style:{color:C.muted} }, "Win rate"), e("div", { style:{color:parseFloat(winRate)>=50?C.green:C.red,fontWeight:600} }, winRate+"%"),
+                            e("div", { style:{color:C.muted} }, "Total P/L"), e("div", { style:{color,fontWeight:700,fontFamily:"'JetBrains Mono',monospace"} }, (stats.pl>=0?"+":"")+"$"+stats.pl.toFixed(2))
+                          )
+                        );
+                      })
                     )
                   );
                 })(),
