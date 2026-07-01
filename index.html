@@ -389,11 +389,12 @@
                 setCandles(prev => [...prev, next].slice(-80));
               }
             }
-            // Signals candle builder (1-min candles)
+            // Signals candle builder (respects current TF granularity)
             if (symbol === sigSymRef.current) {
               const price = parseFloat(quote);
               const t = epoch ? epoch * 1000 : Date.now();
-              const bucketStart = Math.floor(t / 60000) * 60000;
+              const gran = (TF_GRANULARITY[sigTF] || 60) * 1000;
+              const bucketStart = Math.floor(t / gran) * gran;
               const key = symbol;
               const prev = sigCandlesRef.current[key] || [];
               const last = prev[prev.length - 1];
@@ -763,10 +764,55 @@
       setScanRunning(false);
     }
 
-    function startSignals(sym) {
+    const TF_GRANULARITY = { M1:60, M5:300, M15:900, M30:1800, H1:3600, H4:14400, D1:86400 };
+
+    async function fetchSigCandles(sym, tf) {
+      const gran = TF_GRANULARITY[tf] || 60;
+      const count = 300;
+      try {
+        // Use Deriv's public WebSocket to fetch tick history as candles
+        const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
+        await new Promise(res => ws.addEventListener("open", res));
+        ws.send(JSON.stringify({
+          ticks_history: sym,
+          style: "candles",
+          granularity: gran,
+          count,
+          end: "latest",
+        }));
+        const data = await new Promise((res, rej) => {
+          ws.addEventListener("message", ev => {
+            const msg = JSON.parse(ev.data);
+            if (msg.msg_type === "candles") res(msg.candles || []);
+            else if (msg.error) rej(new Error(msg.error.message));
+          });
+          setTimeout(() => rej(new Error("timeout")), 10000);
+        });
+        ws.close();
+        return data.map(c => ({
+          time: c.epoch * 1000,
+          open: c.open, high: c.high, low: c.low, close: c.close,
+        }));
+      } catch(err) {
+        console.warn("fetchSigCandles failed:", err.message);
+        return [];
+      }
+    }
+
+    async function startSignals(sym, tf) {
+      const resolvedTF = tf || sigTF || "M1";
       setSigSym(sym);
-      setSigCandles(sigCandlesRef.current[sym] || []);
+      setSigCandles([]);
+      setSigLastUpdate(null);
+      sigCandlesRef.current[sym] = [];
       if (pubStatus === "connected") pubWs.send({ ticks: sym, subscribe: 1 });
+      // Fetch historical candles immediately
+      const hist = await fetchSigCandles(sym, resolvedTF);
+      if (hist.length) {
+        sigCandlesRef.current[sym] = hist;
+        setSigCandles(hist);
+        setSigLastUpdate(new Date().toLocaleTimeString());
+      }
     }
 
     function startChart(sym) {
@@ -1803,14 +1849,14 @@
             // Left: symbol list
             e("div", { style:{width:200,flexShrink:0} },
               e("div", { style:{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:1,marginBottom:12} }, "MARKET"),
-              e("select", { style:{...fieldStyle,marginBottom:16}, value:sigSym||"", onChange:ev=>{ setSigSym(ev.target.value); startSignals(ev.target.value); } },
+              e("select", { style:{...fieldStyle,marginBottom:16}, value:sigSym||"", onChange:ev=>{ setSigSym(ev.target.value); startSignals(ev.target.value, sigTF); } },
                 e("option",{value:""},"Select market..."),
                 symbols.map(s=>e("option",{key:s.symbol,value:s.symbol},s.display_name))
               ),
               e("div", { style:{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:1,marginBottom:8} }, "TIMEFRAME"),
               e("div", { style:{display:"flex",flexWrap:"wrap",gap:4} },
                 ["M1","M5","M15","M30","H1","H4","D1"].map(tf=>
-                  e("button", { key:tf, style:{padding:"4px 8px",borderRadius:5,border:`1px solid ${sigTF===tf?C.green:C.border}`,background:sigTF===tf?C.raised:"transparent",color:sigTF===tf?C.green:C.muted,fontSize:11,fontWeight:600,cursor:"pointer"}, onClick:()=>setSigTF(tf) }, tf)
+                  e("button", { key:tf, style:{padding:"4px 8px",borderRadius:5,border:`1px solid ${sigTF===tf?C.green:C.border}`,background:sigTF===tf?C.raised:"transparent",color:sigTF===tf?C.green:C.muted,fontSize:11,fontWeight:600,cursor:"pointer"}, onClick:()=>{ setSigTF(tf); if(sigSym) startSignals(sigSym, tf); } }, tf)
                 )
               ),
               n > 0 && e("div", { style:{marginTop:16,fontSize:10,color:C.muted} }, n+" candles • updated "+sigLastUpdate)
