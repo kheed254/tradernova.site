@@ -858,7 +858,15 @@
 
       // ── Nova AI: evaluate confluence before trading ──────────────────────
       if (activeRobot?.id === "novaai") {
-        const signal = evaluateNovaSignal(scanTicks, scanPrices);
+        // Use scanTicks if available, otherwise extract digits from raw ticks
+        let digits = scanTicks.length >= 10 ? scanTicks : [];
+        if (digits.length < 10 && st.sym && ticks[st.sym]?.length >= 10) {
+          digits = ticks[st.sym].map(q => {
+            const pip = 4; // default pip size
+            return Number(Number(q).toFixed(pip).slice(-1));
+          });
+        }
+        const signal = evaluateNovaSignal(digits, scanPrices);
         setNovaSignal(signal);
         if (!signal) {
           // No confluence — skip this round, wait for next tick
@@ -1074,69 +1082,57 @@
 
     // ── Nova AI Signal Engine ─────────────────────────────────────────────────
     function evaluateNovaSignal(digits, prices) {
-      if (digits.length < 15) return null;
+      if (digits.length < 10) return null;
 
       const recent20 = digits.slice(-20);
       const recent10 = digits.slice(-10);
       const recent5  = digits.slice(-5);
 
-      // ── Signal 1: Even/Odd momentum bias ──────────────────────────────────
+      // ── Signal 1: Even/Odd momentum bias (50%+ threshold) ─────────────────
       const evenPct20 = recent20.length ? (recent20.filter(d=>d%2===0).length/recent20.length)*100 : 50;
       const evenPct5  = recent5.length  ? (recent5.filter(d=>d%2===0).length/recent5.length)*100  : 50;
-      // Lowered threshold: 55% instead of 60%
-      const oePrediction = evenPct20 > 55 ? "odd"
-                         : evenPct20 < 45 ? "even"
-                         : evenPct5 > 55  ? "odd"
-                         : evenPct5 < 45  ? "even"
+      const oePrediction = evenPct20 > 52 ? "odd"
+                         : evenPct20 < 48 ? "even"
+                         : evenPct5  > 55 ? "odd"
+                         : evenPct5  < 45 ? "even"
                          : null;
-      const oeStrength = Math.abs(evenPct20 - 50);
+      const oeStrength = Math.abs(evenPct20 - 50) * 2;
 
-      // ── Signal 2: Streak detection ────────────────────────────────────────
+      // ── Signal 2: Streak detection (2+ streak) ────────────────────────────
       let streak = 1;
       const lastType = recent10[recent10.length-1] % 2 === 0 ? "even" : "odd";
       for (let i = recent10.length - 2; i >= 0; i--) {
         if ((recent10[i] % 2 === 0 ? "even" : "odd") === lastType) streak++;
         else break;
       }
-      // Lowered: 2+ streak instead of 3+
       const streakPrediction = streak >= 2 ? (lastType === "even" ? "odd" : "even") : null;
-      const streakStrength = streak >= 2 ? Math.min(streak * 20, 80) : 0;
+      const streakStrength = Math.min(streak * 15, 60);
 
-      // ── Signal 3: Digit frequency bias ───────────────────────────────────
-      const recent15 = digits.slice(-15);
-      const evenCount = recent15.filter(d => d%2===0).length;
-      const oddCount  = recent15.filter(d => d%2!==0).length;
-      // Lowered: 9/15 instead of 10/15
-      const freqBias = evenCount >= 9 ? "odd"
-                     : oddCount  >= 9 ? "even"
-                     : null;
-      const freqStrength = Math.abs(evenCount - oddCount) * 5;
+      // ── Signal 3: Recent majority (any imbalance) ─────────────────────────
+      const evenCount10 = recent10.filter(d=>d%2===0).length;
+      const oddCount10  = recent10.filter(d=>d%2!==0).length;
+      const freqBias = evenCount10 > oddCount10 ? "odd" : evenCount10 < oddCount10 ? "even" : null;
+      const freqStrength = Math.abs(evenCount10 - oddCount10) * 8;
 
-      // ── Confluence: need at least 2 of 3 signals ─────────────────────────
       const signals = [
         { name:"Even/Odd Momentum", value:evenPct20.toFixed(0)+"%", prediction:oePrediction, active:!!oePrediction, strength:oeStrength },
         { name:"Streak Pattern",    value:streak+"x "+lastType, prediction:streakPrediction, active:streak>=2, strength:streakStrength },
-        { name:"Digit Frequency",   value:evenCount+"/"+oddCount, prediction:freqBias, active:!!freqBias, strength:freqStrength },
+        { name:"Digit Frequency",   value:evenCount10+"/"+oddCount10, prediction:freqBias, active:!!freqBias, strength:freqStrength },
       ];
 
       const activeSigs = signals.filter(s => s.active && s.prediction);
+      // Only need 2 signals active
       if (activeSigs.length < 2) return null;
 
       const evenVotes = activeSigs.filter(s => s.prediction === "even").length;
       const oddVotes  = activeSigs.filter(s => s.prediction === "odd").length;
-      if (evenVotes === oddVotes) return null; // conflict
+      if (evenVotes === oddVotes) return null;
 
       const winningPred = evenVotes > oddVotes ? "even" : "odd";
-      const agreement = Math.max(evenVotes, oddVotes) / activeSigs.length;
       const avgStrength = activeSigs.reduce((a,s)=>a+s.strength,0) / activeSigs.length;
-      const confidence = Math.min(Math.round(agreement * 60 + avgStrength * 0.6 + 20), 99);
+      const confidence = Math.min(Math.round(50 + avgStrength * 0.5), 99);
 
-      return {
-        prediction: winningPred,
-        confidence,
-        signals,
-        votes: Math.max(evenVotes, oddVotes),
-      };
+      return { prediction:winningPred, confidence, signals, votes:Math.max(evenVotes, oddVotes) };
     }
 
     async function startSignals(sym, tf) {
@@ -1333,9 +1329,13 @@
       smartOURecoveringRef.current = false;
       // Reset Nova AI
       setNovaSignal(null);
-      setNovaStatus("idle");
+      setNovaStatus("scanning");
       setNovaSkipped(0);
       novaSignalRef.current = null;
+      // Auto-start scanner for Nova AI
+      if (activeRobot?.id === "novaai" && botSym) {
+        startScan(botSym);
+      }
       smartConsecLossesRef.current = 0;
       smartPauseRoundsRef.current = 0;
       smartSwitcherPredRef.current = botPrediction;
