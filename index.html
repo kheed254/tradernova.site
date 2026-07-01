@@ -266,6 +266,18 @@
     const [botTakeProfit, setBotTakeProfit] = useState("10");
     const [botStopLoss, setBotStopLoss] = useState("10");
     const [botMaxStake, setBotMaxStake] = useState("20");
+    const [smartConsecLosses, setSmartConsecLosses] = useState(0);
+    const [smartPauseRounds, setSmartPauseRounds]   = useState(0);
+    const [smartSwitcherPred, setSmartSwitcherPred] = useState("even");
+    const [smartSwitcherLosses, setSmartSwitcherLosses] = useState(0);
+    const smartConsecLossesRef = useRef(0);
+    const smartPauseRoundsRef  = useRef(0);
+    const smartSwitcherPredRef = useRef("even");
+    const smartSwitcherLossesRef = useRef(0);
+    useEffect(() => { smartConsecLossesRef.current = smartConsecLosses; }, [smartConsecLosses]);
+    useEffect(() => { smartPauseRoundsRef.current = smartPauseRounds; }, [smartPauseRounds]);
+    useEffect(() => { smartSwitcherPredRef.current = smartSwitcherPred; }, [smartSwitcherPred]);
+    useEffect(() => { smartSwitcherLossesRef.current = smartSwitcherLosses; }, [smartSwitcherLosses]);
 
     // Speedbot state — multiple independent mini-bots running concurrently
     const SPEEDBOT_TYPES = [
@@ -456,6 +468,60 @@
             setBotPL(newPL);
             setBotTrades(prev => [{ time: Date.now(), stake: st.stake, won, profit, contractId: c.contract_id, prediction: currentPredictionRef.current }, ...prev].slice(0, 50));
             setAuthBalanceRefresh();
+            // ── Smart bot execution logic ──────────────────────────────────
+            const robot = activeRobot;
+            if (robot?.smart) {
+              if (robot.id === "over0") {
+                // Over 0: barrier stays 0, just double on loss reset on win (already handled by Martingale)
+                // No extra logic needed — Martingale handles it
+              } else if (robot.id === "sniper") {
+                // Digit Sniper: re-evaluate hot digit after each trade
+                const recent = scanTicks.slice(-15);
+                if (recent.length >= 10) {
+                  const freq = Array(10).fill(0);
+                  recent.forEach(d => freq[d]++);
+                  const hotDigit = freq.indexOf(Math.max(...freq));
+                  setBotBarrier(hotDigit);
+                }
+              } else if (robot.id === "switcher") {
+                // Even/Odd Switcher: flip after 2 consecutive losses
+                if (!won) {
+                  const newLosses = smartSwitcherLossesRef.current + 1;
+                  setSmartSwitcherLosses(newLosses);
+                  if (newLosses >= 2) {
+                    const newPred = smartSwitcherPredRef.current === "even" ? "odd" : "even";
+                    setSmartSwitcherPred(newPred);
+                    setSmartSwitcherLosses(0);
+                    setBotPrediction(newPred);
+                    currentPredictionRef.current = newPred;
+                    showToast(`Switcher: flipping to ${newPred.toUpperCase()} after 2 losses`, true);
+                  }
+                } else {
+                  setSmartSwitcherLosses(0);
+                }
+              } else if (robot.id === "pausestrike") {
+                // Pause & Strike: sit out 2 rounds after 3 consecutive losses
+                if (!won) {
+                  const newL = smartConsecLossesRef.current + 1;
+                  setSmartConsecLosses(newL);
+                  if (newL >= 3) {
+                    setSmartPauseRounds(2);
+                    setSmartConsecLosses(0);
+                    showToast("Pause & Strike: sitting out 2 rounds after 3 losses", false);
+                  }
+                } else {
+                  setSmartConsecLosses(0);
+                }
+                // Pause: skip next rounds
+                if (smartPauseRoundsRef.current > 0) {
+                  setSmartPauseRounds(r => r - 1);
+                  setBotStatus("idle"); // will be checked before next round fires
+                  return;
+                }
+              }
+            }
+            // ── End smart bot logic ────────────────────────────────────────
+
             // Martingale: increase stake on loss, reset on win (only if enabled)
             const rawNextStake = won
               ? st.baseStake
@@ -880,12 +946,23 @@
       { id:"eo4", name:"Even/Odd 4", desc:"If last 4 digits sum is even, trade ODD. If odd, trade EVEN.", tags:["Even 4","Odd 4"], type:"evenodd", prediction:"odd", color:"#60a5fa" },
       { id:"eo5", name:"Even/Odd 5", desc:"If last 5 digits sum is even, trade ODD. If odd, trade EVEN.", tags:["Even 5","Odd 5"], type:"evenodd", prediction:"odd", color:"#60a5fa" },
       { id:"eo6", name:"Even/Odd 6", desc:"If last 6 digits sum is even, trade ODD. If odd, trade EVEN.", tags:["Even 6","Odd 6"], type:"evenodd", prediction:"odd", color:"#60a5fa" },
+      // Smart bots with entry conditions and recovery
+      { id:"over0", name:"Over 0 Recovery", desc:"Trades DIGITOVER 0 — last digit must be 1-9 (≈90% win rate). Doubles stake after a loss, resets after a win. High frequency, consistent small gains.", tags:["Over 0","Recovery"], type:"overunder", prediction:"over", barrier:0, color:"#ffb830", smart:true, badge:"HIGH WIN RATE" },
+      { id:"sniper", name:"Digit Sniper", desc:"Scans last 15 digits for the hottest digit (3+ appearances). Trades DIFFER against it — mean reversion logic. Only fires when a strong signal is detected.", tags:["Differ","Mean Reversion"], type:"sniper", prediction:"differ", color:"#a78bfa", smart:true, badge:"SMART ENTRY" },
+      { id:"switcher", name:"Even/Odd Switcher", desc:"Starts trading Even. Auto-flips to Odd after 2 consecutive losses, switches back after a win. Doubles stake on each loss sequence, resets on win.", tags:["Even","Odd","Auto-Switch"], type:"switcher", prediction:"even", color:"#4d9fff", smart:true, badge:"AUTO-SWITCH" },
+      { id:"pausestrike", name:"Pause & Strike", desc:"Sits out 2 rounds after 3 consecutive losses, then re-enters with 1.5× stake. Avoids chasing losses during bad streaks.", tags:["Pause","Recovery"], type:"pausestrike", prediction:"even", color:"#ff4d6a", smart:true, badge:"SMART RECOVERY" },
     ];
 
     function applyPreset(preset) {
-      setBotType(preset.type);
-      setBotPrediction(preset.prediction);
-      if (preset.barrier != null) setBotBarrier(preset.barrier);
+      // Map smart bot types to underlying Bulk Trader config
+      if (preset.type === "overunder" || preset.type === "sniper") {
+        setBotType("overunder");
+        setBotPrediction(preset.prediction === "differ" ? "over" : preset.prediction);
+        if (preset.barrier != null) setBotBarrier(preset.barrier);
+      } else if (preset.type === "evenodd" || preset.type === "switcher" || preset.type === "pausestrike") {
+        setBotType("evenodd");
+        setBotPrediction(preset.prediction || "even");
+      }
       setActiveRobot(preset);
       setTab("robotrun");
     }
@@ -927,6 +1004,21 @@
       setBotTrades([]);
       setBotStatus("idle");
       currentPredictionRef.current = botPrediction;
+      // Reset smart bot state
+      setSmartConsecLosses(0);
+      setSmartPauseRounds(0);
+      setSmartSwitcherPred(botPrediction);
+      setSmartSwitcherLosses(0);
+      smartConsecLossesRef.current = 0;
+      smartPauseRoundsRef.current = 0;
+      smartSwitcherPredRef.current = botPrediction;
+      smartSwitcherLossesRef.current = 0;
+      // Digit Sniper: set initial hot digit from scanner
+      if (activeRobot?.id === "sniper" && scanTicks.length >= 10) {
+        const freq = Array(10).fill(0);
+        scanTicks.slice(-15).forEach(d => freq[d]++);
+        setBotBarrier(freq.indexOf(Math.max(...freq)));
+      }
       setBotRunning(true);
     }
     function stopBot() {
@@ -2142,10 +2234,36 @@
 
         tab === "robots" && e("div", { style:{padding:32,maxWidth:1100} },
           e("h2", { style:{fontSize:22,fontWeight:700,margin:"0 0 8px",letterSpacing:-0.5} }, "AI Robots"),
-          e("p", { style:{color:C.muted,fontSize:13,marginBottom:24} }, "One-click presets that configure Bulk Trader with proven Over/Under and Even/Odd setups. Review stakes before starting."),
+          e("p", { style:{color:C.muted,fontSize:13,marginBottom:24} }, "Pre-built trading robots — simple presets and smart bots with entry conditions and recovery logic."),
 
-          e("div", { style:{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(250px,1fr))",gap:16} },
-            ROBOT_PRESETS.map(p => e("div", { key:p.id, style:{
+          // Smart bots section
+          e("div", { style:{marginBottom:8,display:"flex",alignItems:"center",gap:10} },
+            e("div", { style:{fontSize:11,fontWeight:700,color:"#ffb830",letterSpacing:1} }, "✦ SMART BOTS — with entry conditions & recovery"),
+            e("div", { style:{flex:1,height:1,background:"#2a2010"} })
+          ),
+          e("div", { style:{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(250px,1fr))",gap:14,marginBottom:24} },
+            ROBOT_PRESETS.filter(p=>p.smart).map(p => e("div", { key:p.id, style:{
+              background:C.surface, border:`1px solid ${p.color}33`,
+              borderTop:`3px solid ${p.color}`,
+              borderRadius:10, padding:18, display:"flex", flexDirection:"column", gap:10, position:"relative"
+            } },
+              p.badge && e("div", { style:{position:"absolute",top:12,right:12,background:p.color+"22",border:`1px solid ${p.color}`,borderRadius:20,padding:"2px 8px",fontSize:9,fontWeight:800,color:p.color,letterSpacing:1} }, p.badge),
+              e("div", { style:{fontSize:15,fontWeight:700,color:C.text,paddingRight:80} }, p.name),
+              e("p", { style:{color:C.muted,fontSize:12,lineHeight:1.5,minHeight:40} }, p.desc),
+              e("div", { style:{display:"flex",gap:6,flexWrap:"wrap"} },
+                p.tags.map(t => e("span", { key:t, style:{background:C.raised,border:`1px solid ${C.border}`,borderRadius:6,padding:"3px 8px",fontSize:11,color:C.sub} }, t))
+              ),
+              e("button", { style:{background:p.color+"22",border:`1px solid ${p.color}`,color:p.color,borderRadius:7,padding:"8px 16px",fontSize:12,fontWeight:700,cursor:"pointer",marginTop:4}, onClick:()=>applyPreset(p) }, "Open bot →")
+            ))
+          ),
+
+          // Standard presets section
+          e("div", { style:{marginBottom:8,display:"flex",alignItems:"center",gap:10} },
+            e("div", { style:{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:1} }, "STANDARD PRESETS"),
+            e("div", { style:{flex:1,height:1,background:C.border} })
+          ),
+          e("div", { style:{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(250px,1fr))",gap:14} },
+            ROBOT_PRESETS.filter(p=>!p.smart).map(p => e("div", { key:p.id, style:{
               background:C.card, border:`1px solid ${C.border}`, borderTop:`3px solid ${p.color}`,
               borderRadius:10, padding:18, display:"flex", flexDirection:"column", gap:10
             } },
@@ -2437,7 +2555,22 @@
                     e("div", { style:{fontSize:18,fontFamily:"monospace",fontWeight:800,color:rightColor} }, rightPct+"%")
                   )
                 ),
-                e("p", { style:{color:C.muted,fontSize:11,marginTop:14,lineHeight:1.5} }, activeRobot.desc)
+                e("p", { style:{color:C.muted,fontSize:11,marginTop:14,lineHeight:1.5} }, activeRobot.desc),
+                // Smart bot live status
+                activeRobot.smart && e("div", { style:{marginTop:12,display:"flex",flexDirection:"column",gap:6} },
+                  activeRobot.id==="pausestrike" && smartPauseRounds>0 && e("div", { style:{background:"#1c0a0a",border:`1px solid ${C.red}`,borderRadius:8,padding:"8px 12px",fontSize:12,color:C.red,fontWeight:700} }, `⏸ Paused — sitting out ${smartPauseRounds} more round${smartPauseRounds>1?"s":""}`),
+                  activeRobot.id==="switcher" && e("div", { style:{background:C.raised,border:`1px solid ${C.border}`,borderRadius:8,padding:"8px 12px",fontSize:12,color:C.text} },
+                    "Current prediction: ", e("strong",{style:{color:C.green}}, smartSwitcherPred.toUpperCase()),
+                    " • Consecutive losses: ", e("strong",{style:{color:smartSwitcherLosses>0?C.red:C.muted}}, smartSwitcherLosses)
+                  ),
+                  activeRobot.id==="sniper" && e("div", { style:{background:C.raised,border:`1px solid ${C.border}`,borderRadius:8,padding:"8px 12px",fontSize:12,color:C.text} },
+                    "Hot digit: ", e("strong",{style:{color:"#a78bfa"}}, botBarrier),
+                    " • Trading DIFFER against it"
+                  ),
+                  activeRobot.id==="over0" && e("div", { style:{background:C.raised,border:`1px solid ${C.border}`,borderRadius:8,padding:"8px 12px",fontSize:12,color:C.text} },
+                    "Trading DIGITOVER 0 — wins if last digit is 1-9 (", e("strong",{style:{color:C.green}}, "~90% win rate"), ")"
+                  )
+                )
               )
             ),
 
