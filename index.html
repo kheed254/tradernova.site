@@ -518,9 +518,15 @@
         }, 3000);
       },
       onMessage: (msg) => {
-        console.log("AUTH WS msg:", msg.msg_type, "req_id:", msg.req_id, msg);
-        if (msg.msg_type === "balance")   { console.log("balance msg:", msg); setBalance(msg.balance); }
-        if (msg.msg_type === "portfolio") { console.log("portfolio msg:", msg); setPortfolio(msg.portfolio?.contracts || []); }
+        if (msg.msg_type === "balance") {
+          // Only accept balance for the currently active account
+          const loginid = msg.balance?.loginid;
+          const activeId = activeAccount?.loginid || activeAccount?.account_id;
+          if (!loginid || !activeId || loginid === activeId) {
+            setBalance(msg.balance);
+          }
+        }
+        if (msg.msg_type === "portfolio") { setPortfolio(msg.portfolio?.contracts || []); }
 
         // ── Bot-originated proposal (req_id 9001) ──
         if (msg.msg_type === "proposal" && msg.req_id === 9001) {
@@ -1158,6 +1164,7 @@
         setPortfolio([]);
         const otp = await fetchOTPViaBackend(account.account_id, accessTokenRef.current);
         setActiveAccount(account);
+        try { sessionStorage.setItem("tn_active_account", JSON.stringify(account)); } catch {}
         authWs.connect(otp.ws_url);
       } catch(err) {
         showToast("Failed to switch account: "+err.message, false);
