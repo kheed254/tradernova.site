@@ -311,6 +311,10 @@
       });
     };
     const scanSymRef = useRef(null);
+    const scanTicksRef = useRef([]);
+    const ticksRef = useRef({});
+    useEffect(() => { scanTicksRef.current = scanTicks; }, [scanTicks]);
+    useEffect(() => { ticksRef.current = ticks; }, [ticks]);
     const scanCountRef = useRef(1000);
     useEffect(() => { scanSymRef.current = scanRunning ? scanSym : null; }, [scanSym, scanRunning]);
     useEffect(() => { scanCountRef.current = scanCount; }, [scanCount]);
@@ -858,14 +862,16 @@
 
       // ── Nova AI: evaluate confluence before trading ──────────────────────
       if (activeRobot?.id === "novaai") {
-        // Use scanTicks if available, otherwise extract digits from raw ticks
-        let digits = scanTicks.length >= 10 ? scanTicks : [];
-        if (digits.length < 10 && st.sym && ticks[st.sym]?.length >= 10) {
-          digits = ticks[st.sym].map(q => {
-            const pip = 4; // default pip size
-            return Number(Number(q).toFixed(pip).slice(-1));
+        // Use refs to get current values (avoids stale closure bug)
+        const currentScanTicks = scanTicksRef.current;
+        const currentTicks = ticksRef.current;
+        let digits = currentScanTicks.length >= 10 ? currentScanTicks : [];
+        if (digits.length < 10 && st.sym && currentTicks[st.sym]?.length >= 10) {
+          digits = currentTicks[st.sym].map(q => {
+            return Number(Number(q).toFixed(4).replace(".","").slice(-1));
           });
         }
+        console.log("Nova AI evaluating with", digits.length, "digits:", digits.slice(-10));
         const signal = evaluateNovaSignal(digits, scanPrices);
         setNovaSignal(signal);
         if (!signal) {
