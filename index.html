@@ -953,7 +953,10 @@
         contract_type, currency: "USD", duration: 1, duration_unit: "t",
         underlying_symbol: st.sym, req_id: 9001,
       };
-      if (st.type === "overunder" || activeRobot?.id === "novaou") req.barrier = String(botStateRef.current.barrier ?? st.barrier ?? 1);
+      if (st.type === "overunder" || activeRobot?.id === "novaou") {
+        const b = Math.max(1, botStateRef.current.barrier ?? st.barrier ?? 1);
+        req.barrier = String(b);
+      }
       if (activeRobot?.id === "novarf") { req.duration = 5; req.duration_unit = "t"; } // Rise/Fall needs ticks duration
       setBotStatus("waiting_proposal");
       console.log("BOT sending proposal request:", req);
@@ -1142,23 +1145,24 @@
       if (digits.length < 5) return { barrier:1, contract_type:"DIGITOVER", confidence:80, isRecovery:false };
 
       const recent10 = digits.slice(-10);
-      // If last trade was a loss → use DIGITDIFF 0 for ~90% recovery
-      if (lastWon === false) {
-        return { barrier:0, contract_type:"DIGITDIFF", confidence:90, isRecovery:true };
+      const lowCount  = recent10.filter(d => d <= 2).length;
+      const highCount = recent10.filter(d => d >= 8).length;
+
+      // Pick barrier based on recent digit distribution
+      let barrier = 1; // default: DIGITOVER 1 = ~80%
+      let confidence = 80;
+
+      if (lowCount >= 5) {
+        // Many low digits → digits 0,1,2 appearing a lot → shift barrier up
+        barrier = 2; confidence = 72;
+      } else if (highCount >= 5) {
+        // Many high digits → DIGITOVER 1 has even better odds right now
+        barrier = 1; confidence = 85;
       }
-      // Count how many recent digits are low (0-3)
-      const lowCount = recent10.filter(d => d <= 3).length;
-      const highCount = recent10.filter(d => d >= 7).length;
-      if (lowCount >= 6) {
-        // Many low digits recently — switch to DIGITOVER 2 (safer, ~70%)
-        return { barrier:2, contract_type:"DIGITOVER", confidence:72, isRecovery:false };
-      }
-      if (highCount >= 6) {
-        // Many high digits — DIGITOVER 1 is very safe here (~80%)
-        return { barrier:1, contract_type:"DIGITOVER", confidence:85, isRecovery:false };
-      }
-      // Default: DIGITOVER 1 (~80% win rate)
-      return { barrier:1, contract_type:"DIGITOVER", confidence:80, isRecovery:false };
+
+      // After a loss → stay on same contract but Martingale handles stake
+      // No switching — simpler and more effective
+      return { barrier, contract_type:"DIGITOVER", confidence, isRecovery: lastWon===false };
     }
 
     // ── Nova RF Signal Engine ─────────────────────────────────────────────────
