@@ -923,8 +923,8 @@
         const currentDigits = scanTicksRef.current.length >= 5 ? scanTicksRef.current :
           (ticksRef.current[st.sym]||[]).map(q=>Number(Number(q).toFixed(4).replace(".","").slice(-1)));
         const lastTrade = botTradesRef.current[0];
-        if (lastTrade && !lastTrade.won && !rotRecoveringRef.current) {
-          // Just lost — enter Even/Odd recovery
+        if (lastTrade && !lastTrade.won) {
+          // Lost (in sequence OR in recovery) — stay in Even/Odd recovery until a win
           const rec = evaluateRotatorRecovery(currentDigits);
           contract_type = rec.contract_type;
           setRotRecovering(true);
@@ -932,7 +932,7 @@
           setNovaSignal({ prediction:rec.prediction, confidence:50, isRecovery:true, label:rec.label,
             signals:[{ name:"⚡ RECOVERY", value:rec.label, prediction:rec.prediction, active:true, strength:50 }], votes:1 });
         } else {
-          // Normal sequence step (or resuming after recovery win)
+          // Won or first trade — resume/continue sequence
           if (rotRecoveringRef.current) { setRotRecovering(false); rotRecoveringRef.current = false; }
           const stepInfo = evaluateRotatorStep(rotStepRef.current, st.sym, rotMarketBRef.current, currentDigits);
           contract_type = stepInfo.contract_type;
