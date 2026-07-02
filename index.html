@@ -356,6 +356,15 @@
 
     // Nova Rotator state
     const [rotStep, setRotStep] = useState(0);
+    // Entry Scanner state
+    const [esOpen, setEsOpen]         = useState(false);
+    const [esMarket, setEsMarket]     = useState("1HZ10V");
+    const [esType, setEsType]         = useState("under8_5");
+    const [esTicksN, setEsTicksN]     = useState("500");
+    const [esScanning, setEsScanning] = useState(false);
+    const [esProgress, setEsProgress] = useState(null); // {name, i, total, pct}
+    const [esResult, setEsResult]     = useState(null); // {sym, name, entry, quality, label}
+    const esCancelRef = useRef(false);
     const [rotMarketB, setRotMarketB] = useState("R_25"); // secondary market
     const [rotRecovering, setRotRecovering] = useState(false);
     const rotStepRef = useRef(0);
@@ -1022,6 +1031,24 @@
           { name:"Momentum Score", value:rfSig.confidence+"%", prediction:rfSig.prediction, active:true, strength:rfSig.confidence },
         ], votes:2 });
         setNovaStatus("confirmed");
+      } else if (activeRobot?.id === "entryscan") {
+        const cfg = activeRobot.cfg || {};
+        const lastTrade = botTradesRef.current[0];
+        const lost = lastTrade && !lastTrade.won;
+        if (cfg.side === "even" || cfg.side === "odd") {
+          const pred = lost ? (cfg.side === "even" ? "odd" : "even") : cfg.side;
+          contract_type = pred === "even" ? "DIGITEVEN" : "DIGITODD";
+          setNovaSignal({ prediction:pred, confidence:lost?50:55, isRecovery:!!lost,
+            label:(lost?"RECOVERY: ":"")+pred.toUpperCase(),
+            signals:[{ name:lost?"⚡ RECOVERY":"◎ PRIMARY", value:pred.toUpperCase(), prediction:pred, active:true, strength:55 }], votes:1 });
+        } else {
+          contract_type = cfg.side === "under" ? "DIGITUNDER" : "DIGITOVER";
+          overrideBarrier = (lost && cfg.rec != null) ? cfg.rec : cfg.barrier;
+          setNovaSignal({ prediction:cfg.side, confidence:lost?55:75, isRecovery:!!lost,
+            label:(lost?"RECOVERY: ":"")+cfg.side.toUpperCase()+" "+overrideBarrier,
+            signals:[{ name:lost?"⚡ RECOVERY":"◎ PRIMARY", value:cfg.side.toUpperCase()+" "+overrideBarrier, prediction:cfg.side, active:true, strength:70 }], votes:1 });
+        }
+        setNovaStatus("confirmed");
       } else if (activeRobot?.id === "smartou") {
         const pred = smartOUPredRef.current;
         contract_type = pred === "over" ? "DIGITOVER" : "DIGITUNDER";
@@ -1035,14 +1062,14 @@
         contract_type, currency: "USD", duration: 1, duration_unit: "t",
         underlying_symbol: overrideSym || st.sym, req_id: 9001,
       };
-      if ((st.type === "overunder" || activeRobot?.id === "novaou") && activeRobot?.id !== "novarot" && activeRobot?.id !== "novadou") {
+      if ((st.type === "overunder" || activeRobot?.id === "novaou") && activeRobot?.id !== "novarot" && activeRobot?.id !== "novadou" && activeRobot?.id !== "entryscan") {
         const b = activeRobot?.id === "novaou"
           ? botStateRef.current.barrier
           : Math.max(1, st.barrier ?? 1);
         req.barrier = String(b);
       }
       // Nova Rotator / Nova DOU: barrier depends on step (DIFFER/OVER/UNDER need barriers; EVEN/ODD don't)
-      if (activeRobot?.id === "novarot" || activeRobot?.id === "novadou") {
+      if (activeRobot?.id === "novarot" || activeRobot?.id === "novadou" || activeRobot?.id === "entryscan") {
         if (overrideBarrier != null && ["DIGITDIFF","DIGITOVER","DIGITUNDER","DIGITMATCH"].includes(contract_type)) {
           req.barrier = String(overrideBarrier);
         } else {
@@ -1231,6 +1258,104 @@
     }
 
     // ── Nova AI Signal Engine ─────────────────────────────────────────────────
+    // ── Entry Scanner Engine ──────────────────────────────────────────────────
+    const ES_TYPES = [
+      { id:"under8_5", label:"Under 8 Recovery Under 5", side:"under", barrier:8, rec:5, path:"8 -> recovery 5" },
+      { id:"under7_4", label:"Under 7 Recovery Under 4", side:"under", barrier:7, rec:4, path:"7 -> recovery 4" },
+      { id:"over1_4",  label:"Over 1 Recovery Over 4",   side:"over",  barrier:1, rec:4, path:"1 -> recovery 4" },
+      { id:"over2_5",  label:"Over 2 Recovery Over 5",   side:"over",  barrier:2, rec:5, path:"2 -> recovery 5" },
+      { id:"even_odd", label:"Even Recovery Odd",        side:"even",  path:"even -> recovery odd" },
+      { id:"odd_even", label:"Odd Recovery Even",        side:"odd",   path:"odd -> recovery even" },
+    ];
+    const ES_MARKETS = [
+      ["1HZ10V","Volatility 10 (1s) Index"],["R_10","Volatility 10 Index"],
+      ["1HZ25V","Volatility 25 (1s) Index"],["R_25","Volatility 25 Index"],
+      ["1HZ50V","Volatility 50 (1s) Index"],["R_50","Volatility 50 Index"],
+      ["1HZ75V","Volatility 75 (1s) Index"],["R_75","Volatility 75 Index"],
+      ["1HZ100V","Volatility 100 (1s) Index"],["R_100","Volatility 100 Index"],
+    ];
+
+    async function esFetchDigits(sym, count) {
+      const ws = new WebSocket(PUBLIC_WS_URL);
+      await new Promise((res, rej) => { ws.addEventListener("open", res); setTimeout(() => rej(new Error("open timeout")), 8000); });
+      ws.send(JSON.stringify({ ticks_history: sym, style: "ticks", count, end: "latest" }));
+      const prices = await new Promise((res, rej) => {
+        ws.addEventListener("message", ev => {
+          const m = JSON.parse(ev.data);
+          if (m.msg_type === "history") res(m.history?.prices || []);
+          else if (m.error) rej(new Error(m.error.message));
+        });
+        setTimeout(() => rej(new Error("timeout")), 10000);
+      });
+      ws.close();
+      const info = symbols.find(s => s.symbol === sym);
+      const dec = info?.pip ? (String(info.pip).split(".")[1] || "").length : 2;
+      return prices.map(p => Number(Number(p).toFixed(dec).slice(-1)));
+    }
+
+    function esQuality(digits, type) {
+      const winFn = type.side === "under" ? d => d < type.barrier
+                  : type.side === "over"  ? d => d > type.barrier
+                  : type.side === "even"  ? d => d % 2 === 0
+                  : d => d % 2 !== 0;
+      // Conditional win rate by entry digit: after seeing digit e, how often does the NEXT tick win?
+      let best = { entry: null, q: 0 };
+      for (let e = 0; e < 10; e++) {
+        let w = 0, t = 0;
+        for (let i = 0; i < digits.length - 1; i++) {
+          if (digits[i] === e) { t++; if (winFn(digits[i + 1])) w++; }
+        }
+        if (t >= 10) { const q = (w / t) * 100; if (q > best.q) best = { entry: e, q }; }
+      }
+      if (best.entry == null) {
+        const overall = (digits.filter(winFn).length / Math.max(digits.length, 1)) * 100;
+        best = { entry: "-", q: overall };
+      }
+      return best;
+    }
+
+    async function esScanBestMarket() {
+      const type = ES_TYPES.find(t => t.id === esType);
+      const count = Math.max(100, Math.min(5000, parseInt(esTicksN) || 500));
+      setEsScanning(true); setEsResult(null); esCancelRef.current = false;
+      let best = null;
+      for (let i = 0; i < ES_MARKETS.length; i++) {
+        if (esCancelRef.current) break;
+        const [sym, name] = ES_MARKETS[i];
+        setEsProgress({ name, i: i + 1, total: ES_MARKETS.length, pct: ((i + 1) / ES_MARKETS.length) * 100 });
+        try {
+          const digits = await esFetchDigits(sym, count);
+          if (digits.length < 50) continue;
+          const { entry, q } = esQuality(digits, type);
+          if (!best || q > best.quality) best = { sym, name, entry, quality: q, label: type.label };
+        } catch (e) { console.warn("ES scan failed for", sym, e.message); }
+      }
+      setEsResult(best);
+      setEsScanning(false);
+      setEsProgress(null);
+      if (best) setEsMarket(best.sym);
+    }
+
+    function esLoadAndRun() {
+      const t = ES_TYPES.find(x => x.id === esType);
+      const best = esResult || { sym: esMarket, name: esMarket, entry: "-", quality: 0 };
+      setBotSym(best.sym);
+      setBotType(t.side === "even" || t.side === "odd" ? "evenodd" : "overunder");
+      setBotPrediction(t.side === "even" ? "even" : t.side === "odd" ? "odd" : t.side);
+      if (t.barrier != null) setBotBarrier(t.barrier);
+      setActiveRobot({
+        id: "entryscan", name: "Entry Scanner: " + t.label, type: "entryscan", smart: true,
+        desc: `Scanned setup — ${best.name} | Entry ${best.entry} | Quality ${best.quality?.toFixed(2)}%. Primary ${t.label.split(" Recovery")[0]}, recovery ${t.rec != null ? (t.side + " " + t.rec) : "opposite parity"}.`,
+        cfg: { side: t.side, barrier: t.barrier, rec: t.rec },
+        color: "#4d9fff", tags: [t.label, "Scanned"], badge: "SCANNED",
+      });
+      setBotBaseStake("0.35"); setBotMultiplier("2"); setBotMaxStake("10");
+      setBotTakeProfit("3"); setBotStopLoss("5");
+      if (pubStatus === "connected") pubWs.send({ ticks: best.sym, subscribe: 1 });
+      setEsOpen(false);
+      setTab("robotrun");
+    }
+
     // ── Nova Rotator Sequence Engine ─────────────────────────────────────────
     // Sequence: 0=DIFFER@A, 1=OVER1@B, 2=OVER2@B, 3=DIFFER@B, 4=UNDER8@A → repeat
     function evaluateRotatorStep(step, marketA, marketB, digits) {
@@ -2965,7 +3090,10 @@
 
         tab === "robots" && e("div", { style:{padding:32,maxWidth:1100} },
           e("h2", { style:{fontSize:22,fontWeight:700,margin:"0 0 8px",letterSpacing:-0.5} }, "AI Robots"),
-          e("p", { style:{color:C.muted,fontSize:13,marginBottom:24} }, "Pre-built trading robots — simple presets and smart bots with entry conditions and recovery logic."),
+          e("div", { style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:24,gap:16,flexWrap:"wrap"} },
+            e("p", { style:{color:C.muted,fontSize:13,margin:0} }, "Pre-built trading robots — simple presets and smart bots with entry conditions and recovery logic."),
+            e("button", { style:{background:"linear-gradient(90deg,#2563eb,#4d9fff)",color:"#fff",border:"none",borderRadius:8,padding:"9px 18px",fontSize:13,fontWeight:700,cursor:"pointer",flexShrink:0,boxShadow:"0 2px 12px rgba(77,159,255,0.3)"}, onClick:()=>{ setEsOpen(true); setEsResult(null); } }, "◎ Entry Scanner")
+          ),
 
           // Smart bots section
           e("div", { style:{marginBottom:8,display:"flex",alignItems:"center",gap:10} },
@@ -3357,7 +3485,7 @@
                       "Sequence: DIFFER@A → OVER 1@B → OVER 2@B → DIFFER@B → UNDER 8@A → repeat. Loss triggers Even/Odd recovery."
                     )
                   ),
-                  (activeRobot.id==="novaou"||activeRobot.id==="novarf") && e("div", { style:{display:"flex",flexDirection:"column",gap:8} },
+                  (activeRobot.id==="novaou"||activeRobot.id==="novarf"||activeRobot.id==="entryscan") && e("div", { style:{display:"flex",flexDirection:"column",gap:8} },
                     e("div", { style:{
                       background:novaStatus==="confirmed"?"#052e16":novaStatus==="scanning"?"#0c1020":"#0e1015",
                       border:`1px solid ${novaStatus==="confirmed"?C.green:novaStatus==="scanning"?"#4d9fff":C.border}`,
@@ -3367,13 +3495,13 @@
                       e("div",null,
                         e("div",{style:{fontSize:12,fontWeight:700,color:botStatus==="in_trade"?C.green:novaStatus==="confirmed"?C.green:"#4d9fff"}},
                           botStatus==="in_trade"?"⚡ TRADE IN PROGRESS...":
-                          novaStatus==="confirmed"?`✦ SIGNAL CONFIRMED — ${activeRobot.id==="novarf"?"MOMENTUM":"OVER/UNDER"} ENTRY`:
+                          novaStatus==="confirmed"?`✦ SIGNAL CONFIRMED — ${activeRobot.id==="novarf"?"MOMENTUM":activeRobot.id==="entryscan"?"SCANNED":"OVER/UNDER"} ENTRY`:
                           "◎ EVALUATING MARKET CONDITIONS..."
                         ),
                         novaSignal && e("div",{style:{fontSize:11,color:C.muted,marginTop:2}},
-                          activeRobot.id==="novaou"
-                            ? e("span",{style:{color:novaSignal.isRecovery?C.amber:C.green,fontWeight:700}}, novaSignal.label||"")
-                            : `${novaSignal.prediction?.toUpperCase()} • streak ${novaSignal.streak}x ${novaSignal.direction} • ${novaSignal.confidence}% confidence`
+                          activeRobot.id==="novarf"
+                            ? `${novaSignal.prediction?.toUpperCase()} • streak ${novaSignal.streak}x ${novaSignal.direction} • ${novaSignal.confidence}% confidence`
+                            : e("span",{style:{color:novaSignal.isRecovery?C.amber:C.green,fontWeight:700}}, novaSignal.label||"")
                         ),
                         novaSkipped>0 && e("div",{style:{fontSize:10,color:"#475569",marginTop:2}},novaSkipped+" rounds skipped waiting for signal")
                       )
@@ -3758,6 +3886,73 @@
           e("div", { style:{display:"flex",gap:10} },
             e("button", { style:{flex:1,padding:"11px",borderRadius:8,border:"1px solid #475569",background:"transparent",color:C.sub,fontSize:13,fontWeight:600,cursor:"pointer"}, onClick:()=>setRealWarningPending(null) }, "Cancel — stay on Demo"),
             e("button", { style:{flex:1,padding:"11px",borderRadius:8,border:"none",background:C.red,color:"#1f0a0a",fontSize:13,fontWeight:700,cursor:"pointer"}, onClick:()=>doSwitchAccount(realWarningPending) }, "I understand — switch to Real")
+          )
+        )
+      ),
+
+      // ── Entry Scanner modal ──
+      esOpen && e("div", { style:{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:2000,padding:16} },
+        e("div", { style:{background:C.surface,border:`1px solid ${C.border}`,borderRadius:14,width:560,maxWidth:"100%",overflow:"hidden"} },
+          // Header
+          e("div", { style:{background:C.sidebar,padding:"14px 20px",display:"flex",justifyContent:"space-between",alignItems:"center",borderBottom:`1px solid ${C.border}`} },
+            e("h3", { style:{fontSize:15,fontWeight:800,margin:0,color:C.text} }, "◎ Entry Scanner"),
+            e("button", { style:{background:"none",border:"none",color:C.muted,fontSize:18,cursor:"pointer"}, onClick:()=>{ esCancelRef.current = true; setEsOpen(false); } }, "✕")
+          ),
+          e("div", { style:{padding:20,display:"flex",flexDirection:"column",gap:14} },
+            // Row 1: market + trade type
+            e("div", { style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12} },
+              e("div", null,
+                e("label",{style:{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:1,display:"block",marginBottom:6}},"SELECTED MARKET"),
+                e("select",{style:{...fieldStyle,background:"#1e2235"},value:esMarket,onChange:ev=>setEsMarket(ev.target.value)},
+                  ES_MARKETS.map(([sym,name])=>e("option",{key:sym,value:sym},name))
+                )
+              ),
+              e("div", null,
+                e("label",{style:{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:1,display:"block",marginBottom:6}},"TRADE TYPE"),
+                e("select",{style:{...fieldStyle,background:"#1e2235"},value:esType,onChange:ev=>setEsType(ev.target.value)},
+                  ES_TYPES.map(t=>e("option",{key:t.id,value:t.id},t.label))
+                )
+              )
+            ),
+            // Row 2: ticks + prediction path
+            e("div", { style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12} },
+              e("div", null,
+                e("label",{style:{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:1,display:"block",marginBottom:6}},"TICKS NUMBER (100-5000)"),
+                e("input",{style:{...fieldStyle,background:"#1e2235"},type:"number",min:100,max:5000,step:100,value:esTicksN,onChange:ev=>setEsTicksN(ev.target.value)})
+              ),
+              e("div", null,
+                e("label",{style:{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:1,display:"block",marginBottom:6}},"PREDICTION PATH"),
+                e("div",{style:{...fieldStyle,background:"#1e2235",fontFamily:"'JetBrains Mono',monospace",color:C.green}},(ES_TYPES.find(t=>t.id===esType)||{}).path||"—")
+              )
+            ),
+            // Progress bar during scan
+            esProgress && e("div", { style:{background:C.raised,border:`1px solid ${C.border}`,borderRadius:10,padding:"12px 14px"} },
+              e("div",{style:{display:"flex",justifyContent:"space-between",marginBottom:8}},
+                e("span",{style:{fontSize:12,color:C.text,fontWeight:600}},esProgress.name),
+                e("span",{style:{fontSize:12,color:C.sub,fontFamily:"'JetBrains Mono',monospace",fontWeight:700}},esProgress.i+"/"+esProgress.total)
+              ),
+              e("div",{style:{background:"#0a1628",borderRadius:4,height:8,overflow:"hidden"}},
+                e("div",{style:{height:"100%",width:esProgress.pct+"%",background:"linear-gradient(90deg,#2563eb,#4d9fff)",borderRadius:4,transition:"width 0.3s"}})
+              )
+            ),
+            // Result
+            esResult && e("div", { style:{background:"#0c1a2e",border:`1px solid #2563eb55`,borderRadius:10,padding:"12px 14px",fontSize:13,color:C.text,lineHeight:1.6} },
+              "Best market: ", e("strong",{style:{color:C.green}}, esResult.name),
+              " | ", esResult.label,
+              " | Entry ", e("strong",{style:{color:C.cyan}}, esResult.entry),
+              " | Quality ", e("strong",{style:{color:esResult.quality>=75?C.green:esResult.quality>=60?C.amber:C.red}}, esResult.quality.toFixed(2)+"%")
+            ),
+            // Buttons
+            e("div", { style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginTop:4} },
+              e("button", {
+                style:{background:esScanning?"#1e293b":"linear-gradient(90deg,#2563eb,#4d9fff)",color:"#fff",border:"none",borderRadius:8,padding:"11px 0",fontSize:13,fontWeight:700,cursor:esScanning?"default":"pointer"},
+                disabled:esScanning, onClick:esScanBestMarket
+              }, esScanning ? "Scanning..." : "Scan for Best Market"),
+              e("button", {
+                style:{background:"transparent",color:"#4d9fff",border:"1px solid #2563eb",borderRadius:8,padding:"11px 0",fontSize:13,fontWeight:700,cursor:"pointer",opacity:esScanning?0.4:1},
+                disabled:esScanning, onClick:esLoadAndRun
+              }, "Load and Run Bot")
+            )
           )
         )
       ),
