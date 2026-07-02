@@ -1530,20 +1530,8 @@
     }
     function confirmStartBot() {
       setBotConfirming(false);
-      // Safety caps for smart bots — prevent dangerous stake escalation
-      let baseStake = parseFloat(botBaseStake) || 1;
-      let maxStakeCap = parseFloat(botMaxStake) || 20;
-      if (activeRobot?.smart) {
-        if (baseStake > 1) {
-          baseStake = 1;
-          setBotBaseStake("1");
-          showToast("Smart bot: base stake capped at $1 for safety", false);
-        }
-        if (maxStakeCap > 20) {
-          maxStakeCap = 20;
-          setBotMaxStake("20");
-        }
-      }
+      const baseStake = parseFloat(botBaseStake) || 1;
+      const maxStakeCap = parseFloat(botMaxStake) || 20;
       setBotPL(0);
       setBotStake(baseStake);
       setBotTrades([]);
