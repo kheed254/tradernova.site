@@ -2953,6 +2953,12 @@
               // Compact config
               e("div", { style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:20,display:"flex",flexDirection:"column",gap:14,opacity:botRunning?0.6:1,pointerEvents:botRunning?"none":"auto"} },
                 e("div", { style:{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:1} }, "BOT CONTROLS"),
+                // Live stake display — always visible regardless of input rendering
+                e("div", { style:{background:"#0a1628",border:`1px solid ${C.border}`,borderRadius:8,padding:"8px 12px",display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,fontSize:11} },
+                  e("div", null, e("div",{style:{color:C.muted,marginBottom:2}},"BASE STAKE"), e("div",{style:{color:C.green,fontWeight:700,fontFamily:"'JetBrains Mono',monospace"}},"$"+botBaseStake)),
+                  e("div", null, e("div",{style:{color:C.muted,marginBottom:2}},"NEXT STAKE"),  e("div",{style:{color:C.amber,fontWeight:700,fontFamily:"'JetBrains Mono',monospace"}},"$"+parseFloat(botStake||botBaseStake).toFixed(2))),
+                  e("div", null, e("div",{style:{color:C.muted,marginBottom:2}},"MAX CAP"),     e("div",{style:{color:C.red,fontWeight:700,fontFamily:"'JetBrains Mono',monospace"}},"$"+botMaxStake))
+                ),
                 e("div", { style:{display:"flex",gap:10} },
                   e("div", { style:{flex:1} },
                     e("label", { style:{fontSize:10,color:C.muted,display:"block",marginBottom:4} }, "Base Stake ($)"),
