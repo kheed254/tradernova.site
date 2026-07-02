@@ -914,16 +914,21 @@
         const currentDigits = scanTicksRef.current.length >= 5 ? scanTicksRef.current :
           (ticksRef.current[st.sym]||[]).map(q=>Number(Number(q).toFixed(4).replace(".","").slice(-1)));
         const lastTrade = botTradesRef.current[0];
-        const ouSig = evaluateNovaOUSignal(currentDigits, lastTrade?.won ?? null);
+        const tradeCount = botTradesRef.current.length;
+        const ouSig = evaluateNovaOUSignal(currentDigits, lastTrade?.won ?? null, tradeCount);
         contract_type = ouSig.contract_type;
-        if (ouSig.barrier !== st.barrier) {
-          setBotBarrier(ouSig.barrier);
-          botStateRef.current = { ...botStateRef.current, barrier: ouSig.barrier };
-        }
-        setNovaSignal({ prediction: ouSig.contract_type==="DIGITDIFF"?"differ":"over", confidence:ouSig.confidence, isRecovery:ouSig.isRecovery,
+        botStateRef.current = { ...botStateRef.current, barrier: ouSig.barrier };
+        setBotBarrier(ouSig.barrier);
+        setNovaSignal({
+          prediction: ouSig.contract_type === "DIGITUNDER" ? "under" : "over",
+          confidence: ouSig.confidence,
+          isRecovery: ouSig.isRecovery,
+          label: ouSig.label,
           signals:[
-            { name: ouSig.isRecovery?"Recovery Mode":"Base Strategy", value:ouSig.contract_type+" "+ouSig.barrier, prediction:"over", active:true, strength:ouSig.confidence },
-          ], votes:1 });
+            { name: ouSig.isRecovery ? "⚡ RECOVERY MODE" : "◎ NORMAL MODE",
+              value: ouSig.label, prediction:"over", active:true, strength:ouSig.confidence },
+          ], votes:1
+        });
         setNovaStatus("confirmed");
       } else if (activeRobot?.id === "novarf") {
         const currentPrices = scanPricesRef.current?.length >= 5 ? scanPricesRef.current :
@@ -954,7 +959,9 @@
         underlying_symbol: st.sym, req_id: 9001,
       };
       if (st.type === "overunder" || activeRobot?.id === "novaou") {
-        const b = Math.max(1, botStateRef.current.barrier ?? st.barrier ?? 1);
+        const b = activeRobot?.id === "novaou"
+          ? botStateRef.current.barrier
+          : Math.max(1, st.barrier ?? 1);
         req.barrier = String(b);
       }
       if (activeRobot?.id === "novarf") { req.duration = 5; req.duration_unit = "t"; } // Rise/Fall needs ticks duration
@@ -1141,28 +1148,27 @@
     // ── Nova AI Signal Engine ─────────────────────────────────────────────────
     // ── Nova OU Signal Engine ─────────────────────────────────────────────────
     // Returns: { barrier, contract_type, confidence, isRecovery }
-    function evaluateNovaOUSignal(digits, lastWon) {
-      if (digits.length < 5) return { barrier:1, contract_type:"DIGITOVER", confidence:80, isRecovery:false };
+    function evaluateNovaOUSignal(digits, lastWon, tradeCount) {
+      const inRecovery = lastWon === false;
 
-      const recent10 = digits.slice(-10);
-      const lowCount  = recent10.filter(d => d <= 2).length;
-      const highCount = recent10.filter(d => d >= 8).length;
-
-      // Pick barrier based on recent digit distribution
-      let barrier = 1; // default: DIGITOVER 1 = ~80%
-      let confidence = 80;
-
-      if (lowCount >= 5) {
-        // Many low digits → digits 0,1,2 appearing a lot → shift barrier up
-        barrier = 2; confidence = 72;
-      } else if (highCount >= 5) {
-        // Many high digits → DIGITOVER 1 has even better odds right now
-        barrier = 1; confidence = 85;
+      if (inRecovery) {
+        // After a loss: use Over 5 or Under 4 (pick based on recent digits)
+        const recent5 = digits.slice(-5);
+        const avgDigit = recent5.length ? recent5.reduce((a,b)=>a+b,0)/recent5.length : 5;
+        if (avgDigit > 5) {
+          // Recent digits high → predict Under 4
+          return { barrier:4, contract_type:"DIGITUNDER", confidence:50, isRecovery:true, label:"RECOVERY: UNDER 4" };
+        } else {
+          // Recent digits low → predict Over 5
+          return { barrier:5, contract_type:"DIGITOVER", confidence:50, isRecovery:true, label:"RECOVERY: OVER 5" };
+        }
       }
 
-      // After a loss → stay on same contract but Martingale handles stake
-      // No switching — simpler and more effective
-      return { barrier, contract_type:"DIGITOVER", confidence, isRecovery: lastWon===false };
+      // Normal mode: alternate between Over 3 and Over 4
+      const useOver4 = (tradeCount % 2 === 0);
+      const barrier = useOver4 ? 4 : 3;
+      const confidence = useOver4 ? 60 : 70; // Over 3 = ~70%, Over 4 = ~60%
+      return { barrier, contract_type:"DIGITOVER", confidence, isRecovery:false, label:`NORMAL: OVER ${barrier}` };
     }
 
     // ── Nova RF Signal Engine ─────────────────────────────────────────────────
@@ -1331,7 +1337,7 @@
       { id:"eo6", name:"Even/Odd 6", desc:"If last 6 digits sum is even, trade ODD. If odd, trade EVEN.", tags:["Even 6","Odd 6"], type:"evenodd", prediction:"odd", color:"#60a5fa" },
       // Smart bots with entry conditions and recovery
       { id:"novaai", name:"Nova AI", desc:"Multi-signal confluence engine. Scans Even/Odd momentum, digit frequency bias, and streak patterns simultaneously. Only fires when all 3 signals agree.", tags:["Multi-Signal","Confluence","AI"], type:"novaai", prediction:"even", color:"#39ff88", smart:true, badge:"✦ NOVA AI" },
-      { id:"novaou", name:"Nova OU", desc:"Trades DIGITOVER 1 (~80% win rate) as base. Switches to DIGITOVER 2 when digits trend low. Uses DIGITDIFF 0 (~90%) as recovery after a loss.", tags:["Over/Under","High Win Rate","Recovery"], type:"novaou", prediction:"over", barrier:1, color:"#ffb830", smart:true, badge:"~80% WIN RATE" },
+      { id:"novaou", name:"Nova OU", desc:"Alternates between DIGITOVER 3 and DIGITOVER 4 normally. After a loss, recovers with DIGITOVER 5 or DIGITUNDER 4 depending on recent digit average. Stake doubles on recovery.", tags:["Over 3","Over 4","Recovery"], type:"novaou", prediction:"over", barrier:3, color:"#ffb830", smart:true, badge:"OVER/UNDER" },
       { id:"novarf", name:"Nova RF", desc:"Rise/Fall momentum bot. Reads live price direction from last 5 ticks — only enters when 3+ consecutive moves agree. Trades CALL (Rise) or PUT (Fall) with momentum confirmation.", tags:["Rise/Fall","Momentum","Confluence"], type:"novarf", prediction:"rise", color:"#4d9fff", smart:true, badge:"MOMENTUM" },
       { id:"smartou", name:"Smart Over/Under", desc:"Trades Over 2-5 (user picks barrier). After a loss, analyzes last 10 digits and auto-switches to the opposite side that has market edge. Recovers with 2.2× stake.", tags:["Over","Under","Auto-Switch","Recovery"], type:"smartou", prediction:"over", barrier:3, color:"#39ff88", smart:true, badge:"MARKET ADAPTIVE" },
       { id:"over0", name:"Over 0 Recovery", desc:"Trades DIGITDIFF 0 — wins when last digit is NOT 0 (digits 1-9 win ≈90% of the time). Doubles stake after a loss, resets after a win.", tags:["Differ 0","Recovery"], type:"differ0", prediction:"differ", barrier:0, color:"#ffb830", smart:true, badge:"~90% WIN RATE" },
@@ -3186,7 +3192,7 @@
                         ),
                         novaSignal && e("div",{style:{fontSize:11,color:C.muted,marginTop:2}},
                           activeRobot.id==="novaou"
-                            ? `${novaSignal.isRecovery?"RECOVERY: ":""}${novaSignal.prediction?.toUpperCase()} • ${novaSignal.confidence}% confidence`
+                            ? e("span",{style:{color:novaSignal.isRecovery?C.amber:C.green,fontWeight:700}}, novaSignal.label||"")
                             : `${novaSignal.prediction?.toUpperCase()} • streak ${novaSignal.streak}x ${novaSignal.direction} • ${novaSignal.confidence}% confidence`
                         ),
                         novaSkipped>0 && e("div",{style:{fontSize:10,color:"#475569",marginTop:2}},novaSkipped+" rounds skipped waiting for signal")
