@@ -22,6 +22,8 @@
 
     select, input, button { font-family: 'Inter', system-ui, sans-serif; }
     input[type=number], input[type=text], select { color: #e8e6df !important; -webkit-text-fill-color: #e8e6df !important; }
+    input::-webkit-input-placeholder { color: #4b5563 !important; -webkit-text-fill-color: #4b5563 !important; }
+    input:-webkit-autofill { -webkit-box-shadow: 0 0 0 30px #13161c inset !important; -webkit-text-fill-color: #e8e6df !important; }
 
     /* Monospace for all numbers */
     .mono { font-family: 'JetBrains Mono', monospace; }
@@ -2954,11 +2956,11 @@
                 e("div", { style:{display:"flex",gap:10} },
                   e("div", { style:{flex:1} },
                     e("label", { style:{fontSize:10,color:C.muted,display:"block",marginBottom:4} }, "Base Stake ($)"),
-                    e("input", { style:{...fieldStyle,background:"#1a1f2e",color:"#e8e6df"}, type:"number", min:0.35, step:0.01, value:botBaseStake, placeholder:"0.35", onChange:ev=>setBotBaseStake(ev.target.value) })
+                    e("input", { style:{...fieldStyle,background:"#1e2235",color:"#e8e6df",WebkitTextFillColor:"#e8e6df"}, type:"number", min:0.35, step:0.01, value:botBaseStake, placeholder:"0.35", onChange:ev=>setBotBaseStake(ev.target.value) })
                   ),
                   e("div", { style:{flex:1} },
                     e("label", { style:{fontSize:10,color:C.muted,display:"block",marginBottom:4} }, "Max Stake Cap ($)"),
-                    e("input", { style:{...fieldStyle,background:"#1a1f2e",color:"#e8e6df"}, type:"number", min:1, value:botMaxStake, placeholder:"10", onChange:ev=>setBotMaxStake(ev.target.value) })
+                    e("input", { style:{...fieldStyle,background:"#1e2235",color:"#e8e6df",WebkitTextFillColor:"#e8e6df"}, type:"number", min:1, value:botMaxStake, placeholder:"10", onChange:ev=>setBotMaxStake(ev.target.value) })
                   )
                 ),
                 e("div", { style:{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"6px 0"} },
@@ -2970,14 +2972,14 @@
                 ),
                 botUseMartingale && e("div", null,
                   e("label", { style:{fontSize:10,color:C.muted,display:"block",marginBottom:4} }, "Martingale ×"),
-                  e("input", { style:{...fieldStyle,background:"#1a1f2e",color:"#e8e6df"}, type:"number", min:1, step:0.1, value:botMultiplier, placeholder:"2", onChange:ev=>setBotMultiplier(ev.target.value) })
+                  e("input", { style:{...fieldStyle,background:"#1e2235",color:"#e8e6df",WebkitTextFillColor:"#e8e6df"}, type:"number", min:1, step:0.1, value:botMultiplier, placeholder:"2", onChange:ev=>setBotMultiplier(ev.target.value) })
                 ),
                 e("div", { style:{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"6px 0"} },
                   e("div", { style:{fontSize:13,color:C.text,fontWeight:600} }, "Take Profit / Stop Loss")
                 ),
                 e("div", { style:{display:"flex",gap:10} },
-                  e("input", { style:{...fieldStyle,background:"#1a1f2e",color:"#e8e6df"}, type:"number", min:0.5, step:0.5, value:botTakeProfit, onChange:ev=>setBotTakeProfit(ev.target.value), placeholder:"5" }),
-                  e("input", { style:{...fieldStyle,background:"#1a1f2e",color:"#e8e6df"}, type:"number", min:0.5, step:0.5, value:botStopLoss, onChange:ev=>setBotStopLoss(ev.target.value), placeholder:"5" })
+                  e("input", { style:{...fieldStyle,background:"#1e2235",color:"#e8e6df",WebkitTextFillColor:"#e8e6df"}, type:"number", min:0.5, step:0.5, value:botTakeProfit, onChange:ev=>setBotTakeProfit(ev.target.value), placeholder:"5" }),
+                  e("input", { style:{...fieldStyle,background:"#1e2235",color:"#e8e6df",WebkitTextFillColor:"#e8e6df"}, type:"number", min:0.5, step:0.5, value:botStopLoss, onChange:ev=>setBotStopLoss(ev.target.value), placeholder:"5" })
                 )
               ),
 
