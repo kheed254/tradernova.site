@@ -599,6 +599,18 @@
                 setNovaStatus("scanning");
                 setNovaSignal(null);
                 novaSignalRef.current = null;
+                // Reset stake to base after 5 consecutive losses to protect capital
+                if (!won) {
+                  const newLosses = smartConsecLossesRef.current + 1;
+                  setSmartConsecLosses(newLosses);
+                  if (newLosses >= 5) {
+                    setBotStake(parseFloat(botBaseStake)||0.35);
+                    setSmartConsecLosses(0);
+                    showToast("Nova AI: stake reset after 5 losses — protecting capital", false);
+                  }
+                } else {
+                  setSmartConsecLosses(0);
+                }
               } else if (robot.id === "smartou") {
                 // Smart Over/Under: analyze market and switch sides adaptively after a loss
                 const barrier = st.barrier ?? 3;
@@ -1243,10 +1255,10 @@
         setBotType("evenodd");
         setBotPrediction("even");
         setBotBaseStake("0.35");
-        setBotMultiplier("2");
-        setBotMaxStake("15");
-        setBotTakeProfit("10");
-        setBotStopLoss("5");
+        setBotMultiplier("1.5");   // was 2 — gentler escalation
+        setBotMaxStake("5");       // hard cap at $5 per trade
+        setBotTakeProfit("3");     // take profit at $3
+        setBotStopLoss("10");      // wider stop-loss to survive more losses
       } else if (preset.type === "smartou") {
         setBotType("overunder");
         setBotPrediction("over");
