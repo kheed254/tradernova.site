@@ -1974,6 +1974,74 @@
       );
     }
 
+    // ── Landing page (pre-login) ──
+    if (authState !== "authed") {
+      const testimonials = [
+        { initials:"MG", name:"Mark Gonzales",  role:"Professional Day Trader", roleColor:"#39ff88", quote:"TraderNova transformed my trading. The automated bots handle my strategies flawlessly, and I've seen consistent profits. The platform is intuitive and powerful." },
+        { initials:"KM", name:"Kelvin Maxwell", role:"Crypto Investor",         roleColor:"#4d9fff", quote:"The smart bots are incredible! Nova AI scans multiple signals before every trade. The transparency and control are unmatched." },
+        { initials:"DG", name:"Delvoux Glen",   role:"Forex Specialist",        roleColor:"#22d3ee", quote:"Lightning-fast execution and professional-grade tools. The risk management features saved me from major losses. This is the future of trading." },
+        { initials:"SA", name:"Sarah Adams",    role:"Strategy Builder",        roleColor:"#a78bfa", quote:"The Entry Scanner finds the best market in seconds, and the signal analysis rivals paid platforms. All in one workspace." },
+      ];
+      return e("div", { style:{minHeight:"100vh",background:"linear-gradient(160deg,#0a0e1a 0%,#0d1528 45%,#0a1020 100%)",display:"flex",flexDirection:"column",position:"relative",overflow:"hidden"} },
+        // Ambient candle glows left/right
+        e("div",{style:{position:"absolute",left:-120,top:80,width:340,height:420,background:"radial-gradient(circle,rgba(57,255,136,0.07),transparent 70%)",filter:"blur(10px)",pointerEvents:"none"}}),
+        e("div",{style:{position:"absolute",right:-120,top:60,width:340,height:420,background:"radial-gradient(circle,rgba(255,77,106,0.08),transparent 70%)",filter:"blur(10px)",pointerEvents:"none"}}),
+        // Star particles
+        e("div",{style:{position:"absolute",inset:0,pointerEvents:"none"}},
+          [...Array(30)].map((_,i)=>e("div",{key:i,style:{position:"absolute",left:((i*137.5)%100)+"%",top:((i*89.7+7)%100)+"%",width:i%6===0?2:1,height:i%6===0?2:1,borderRadius:"50%",background:i%3===0?"#39ff88":"#ffffff",opacity:0.12+(i%4)*0.06}}))
+        ),
+
+        // Top bar
+        e("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 28px",borderBottom:"1px solid rgba(30,32,40,0.6)",position:"relative",zIndex:2}},
+          e("div",{style:{display:"flex",alignItems:"center",gap:8}},
+            e("span",{style:{background:C.green,color:"#08090c",fontWeight:900,fontSize:12,borderRadius:6,padding:"3px 7px",fontFamily:"'JetBrains Mono',monospace"}},"TN"),
+            e("span",{style:{fontSize:15,fontWeight:900,letterSpacing:-0.5}},"Trader",e("span",{style:{color:C.green}},"Nova"))
+          ),
+          e("button",{style:{background:"#0e1015",border:`1px solid ${C.border}`,color:C.text,borderRadius:20,padding:"8px 20px",fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",gap:6},onClick:redirectToOAuth},
+            authState==="loading"?"Connecting...":"Login Now", e("span",{style:{fontSize:13}},"→")
+          )
+        ),
+
+        // Hero
+        e("div",{style:{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",textAlign:"center",padding:"48px 24px 24px",position:"relative",zIndex:2}},
+          e("h1",{style:{fontSize:46,fontWeight:900,letterSpacing:-1.5,margin:"0 0 14px",lineHeight:1.1}},
+            e("span",{style:{background:"linear-gradient(90deg,#39ff88,#22d3ee)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}},"Welcome to "),
+            e("span",{style:{color:"#fff"}},"Trader"),
+            e("span",{style:{color:C.green}},"Nova")
+          ),
+          e("p",{style:{color:"#6b7a9e",fontSize:14,margin:"0 0 32px",maxWidth:520}},"Your all-in-one workspace for automated trading, smart bots, and real-time market insights."),
+          e("button",{style:{background:"linear-gradient(90deg,#16a34a,#39ff88)",color:"#052e16",border:"none",borderRadius:24,padding:"14px 34px",fontSize:15,fontWeight:800,cursor:"pointer",display:"flex",alignItems:"center",gap:10,boxShadow:"0 4px 24px rgba(57,255,136,0.35)"},onClick:redirectToOAuth},
+            authState==="loading"?"Connecting to Deriv...":"Start Trading Now", e("span",null,"→")
+          ),
+          e("div",{style:{display:"flex",gap:24,marginTop:18,flexWrap:"wrap",justifyContent:"center"}},
+            e("span",{style:{fontSize:11,color:C.sub,display:"flex",alignItems:"center",gap:6}},e("span",{style:{color:C.green}},"✓")," No Credit Card Required"),
+            e("span",{style:{fontSize:11,color:C.sub,display:"flex",alignItems:"center",gap:6}},e("span",{style:{color:C.green}},"✓")," $10,000 Virtual Account")
+          ),
+          authState==="error" && e("div",{style:{marginTop:16,background:"#1c0a0a",border:`1px solid ${C.red}`,borderRadius:8,padding:"8px 16px",fontSize:12,color:"#fca5a5"}},"Login failed: "+(authError||"unknown error")+" — please try again"),
+
+          // Testimonials
+          e("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))",gap:18,maxWidth:1150,width:"100%",marginTop:56}},
+            testimonials.map(t=>
+              e("div",{key:t.initials,style:{background:"rgba(13,21,38,0.75)",border:"1px solid rgba(30,32,40,0.9)",borderRadius:12,padding:"38px 20px 20px",position:"relative",backdropFilter:"blur(8px)",textAlign:"center"}},
+                e("div",{style:{position:"absolute",top:-24,left:"50%",transform:"translateX(-50%)",width:48,height:48,borderRadius:"50%",background:"linear-gradient(135deg,#13314f,#0c1a2e)",border:"2px solid #1e3a5f",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:800,color:"#7dd3fc",letterSpacing:1}},t.initials),
+                e("p",{style:{fontSize:12,color:"#9ca3af",fontStyle:"italic",lineHeight:1.7,margin:"0 0 16px",textAlign:"left"}},'"'+t.quote+'"'),
+                e("div",{style:{fontSize:13,fontWeight:700,color:C.text}},t.name),
+                e("div",{style:{fontSize:11,color:t.roleColor,marginBottom:8}},t.role),
+                e("div",{style:{fontSize:13,color:"#fbbf24",letterSpacing:2}},"★★★★★")
+              )
+            )
+          )
+        ),
+
+        // Bottom status bar
+        e("div",{style:{display:"flex",justifyContent:"flex-end",alignItems:"center",gap:14,padding:"10px 20px",borderTop:"1px solid rgba(30,32,40,0.6)",fontSize:11,color:C.muted,position:"relative",zIndex:2}},
+          e("span",{className:"live-dot",style:{width:7,height:7,borderRadius:"50%",background:C.green,display:"inline-block"}}),
+          e("span",{style:{fontFamily:"'JetBrains Mono',monospace"}},new Date().toISOString().slice(0,19).replace("T"," ")+" GMT"),
+          e("span",null,"🇬🇧 EN")
+        )
+      );
+    }
+
     return e("div", { style:{display:"flex",flexDirection:"column",height:"100vh",overflow:"hidden",background:C.bg} },
 
       // ── Top Header Bar ──
