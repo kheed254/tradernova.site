@@ -21,6 +21,7 @@
     #root { display: flex; height: 100vh; overflow: hidden; flex-direction: column; }
 
     select, input, button { font-family: 'Inter', system-ui, sans-serif; }
+    input[type=number], input[type=text], select { color: #e8e6df !important; -webkit-text-fill-color: #e8e6df !important; }
 
     /* Monospace for all numbers */
     .mono { font-family: 'JetBrains Mono', monospace; }
@@ -878,8 +879,9 @@
         if (!signal) {
           setNovaStatus("scanning");
           setNovaSkipped(s => s + 1);
-          // Use botTick to force re-run even when botStatus stays "idle"
-          setTimeout(() => setBotTick(t => t + 1), 800);
+          setTimeout(() => {
+            if (botRunningRef.current) setBotTick(t => t + 1);
+          }, 800);
           return;
         }
         setNovaStatus("confirmed");
@@ -1448,6 +1450,7 @@
       border: `1px solid ${C.border}`,
       borderRadius: 8,
       color: C.text,
+      WebkitTextFillColor: C.text,
       padding: "9px 12px",
       fontSize: 13,
       width: "100%",
